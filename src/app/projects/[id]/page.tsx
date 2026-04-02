@@ -78,6 +78,12 @@ export default async function ProjectDetailPage({ params }: PageProps) {
     .eq("project_id", id)
     .in("status", ["invoiced", "paid", "settled"])
 
+  const { data: settlementPeriods } = await supabase
+    .from("settlement_periods")
+    .select("*")
+    .eq("project_id", id)
+    .order("number", { ascending: true })
+
   const { data: accountingRequests } = await supabase
     .from("accounting_requests")
     .select("id")
@@ -269,19 +275,49 @@ export default async function ProjectDetailPage({ params }: PageProps) {
                     <CardTitle className="text-base">Wskaźniki uczestników</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="grid grid-cols-2 gap-4">
-                      {[
-                        { label: "Kobiety", value: femaleCount, color: "text-pink-600" },
-                        { label: "Mężczyźni", value: maleCount, color: "text-blue-600" },
-                        { label: "Wiek 55+", value: age55Plus, color: "text-amber-600" },
-                        { label: "Obszar wiejski", value: ruralCount, color: "text-green-600" },
-                      ].map((stat) => (
-                        <div key={stat.label} className="text-center p-3 bg-slate-50 rounded-lg">
-                          <p className={`text-2xl font-bold ${stat.color}`}>{stat.value}</p>
-                          <p className="text-xs text-slate-500 mt-1">{stat.label}</p>
-                        </div>
-                      ))}
-                    </div>
+                    {(() => {
+                      // Cele wskaźnikowe z wniosku per projekt
+                      const targets: Record<string, { total: number; female: number; male: number; age55: number; rural: number }> = {
+                        'FEDS.07.03-IP.02-0039/25': { total: 460, female: 408, male: 52, age55: 99, rural: 100 },
+                        'FEDS.07.05-IP.02-0172/24': { total: 80, female: 48, male: 32, age55: 0, rural: 0 },
+                      }
+                      const t = targets[project.project_number] ?? { total: 0, female: 0, male: 0, age55: 0, rural: 0 }
+                      const stats = [
+                        { label: "Kobiety", value: femaleCount, target: t.female, color: "text-pink-600", warn: femaleCount >= t.female },
+                        { label: "Mężczyźni", value: maleCount, target: t.male, color: "text-blue-600", warn: maleCount >= t.male },
+                        { label: "Wiek 55+", value: age55Plus, target: t.age55, color: "text-amber-600", warn: age55Plus >= t.age55 },
+                        { label: "Obszar wiejski", value: ruralCount, target: t.rural, color: "text-green-600", warn: ruralCount >= t.rural },
+                      ]
+                      return (
+                        <>
+                          <div className="mb-3 flex items-center justify-between">
+                            <span className="text-sm text-slate-500">Łącznie uczestników</span>
+                            <span className={`text-sm font-semibold ${totalParticipants >= t.total ? "text-green-600" : "text-slate-900"}`}>
+                              {totalParticipants} / {t.total}
+                              {t.total > 0 && <span className="text-xs text-slate-400 ml-1">({Math.round(totalParticipants/t.total*100)}%)</span>}
+                            </span>
+                          </div>
+                          <div className="w-full bg-slate-100 rounded-full h-1.5 mb-4">
+                            <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${Math.min(100, t.total > 0 ? totalParticipants/t.total*100 : 0)}%` }} />
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            {stats.map((stat) => (
+                              <div key={stat.label} className="p-3 bg-slate-50 rounded-lg">
+                                <p className={`text-xl font-bold ${stat.color}`}>{stat.value}{stat.target > 0 && <span className="text-sm font-normal text-slate-400"> / {stat.target}</span>}</p>
+                                <div className="flex items-center justify-between mt-1">
+                                  <p className="text-xs text-slate-500">{stat.label}</p>
+                                  {stat.target > 0 && (
+                                    <span className={`text-xs font-medium ${stat.warn ? "text-green-600" : "text-amber-600"}`}>
+                                      {stat.target > 0 ? `brakuje: ${Math.max(0, stat.target - stat.value)}` : ""}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )
+                    })()}
                     <div className="mt-4 text-right">
                       <Link href={`/projects/${id}/participants`} className="text-sm text-blue-600 hover:text-blue-700 flex items-center gap-1 justify-end">
                         Wszyscy uczestnicy <ArrowRight className="w-3.5 h-3.5" />
@@ -428,11 +464,68 @@ export default async function ProjectDetailPage({ params }: PageProps) {
                   </Button>
                 </Link>
               </div>
-              <Card>
-                <CardContent className="py-8 text-center text-slate-500">
-                  <p>Przejdź do pełnego widoku WNP, aby zobaczyć okresy rozliczeniowe.</p>
-                </CardContent>
-              </Card>
+              {settlementPeriods && settlementPeriods.length > 0 ? (
+                <div className="space-y-3">
+                  {settlementPeriods.map((period) => {
+                    const statusColors: Record<string, string> = {
+                      draft: "bg-slate-100 text-slate-600",
+                      submitted: "bg-blue-100 text-blue-700",
+                      approved: "bg-green-100 text-green-700",
+                      rejected: "bg-red-100 text-red-700",
+                    }
+                    const statusLabels: Record<string, string> = {
+                      draft: "Szkic",
+                      submitted: "Złożony",
+                      approved: "Zatwierdzony",
+                      rejected: "Odrzucony",
+                    }
+                    return (
+                      <Card key={period.id}>
+                        <CardContent className="p-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <CheckCircle className={`w-5 h-5 ${period.status === "approved" ? "text-green-500" : "text-slate-300"}`} />
+                              <div>
+                                <p className="font-semibold text-slate-900">WNP{String(period.number).padStart(3, "0")}</p>
+                                <p className="text-sm text-slate-500">{formatDate(period.period_start)} – {formatDate(period.period_end)}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-4">
+                              <div className="text-right">
+                                <p className="text-sm font-semibold text-slate-900">{formatCurrency(period.total_claimed)}</p>
+                                <p className="text-xs text-slate-400">rozliczone</p>
+                              </div>
+                              {period.advance_received && (
+                                <div className="text-right">
+                                  <p className="text-sm font-semibold text-blue-700">{formatCurrency(period.advance_amount)}</p>
+                                  <p className="text-xs text-slate-400">zaliczka</p>
+                                </div>
+                              )}
+                              <Badge className={statusColors[period.status] ?? ""}>{statusLabels[period.status] ?? period.status}</Badge>
+                            </div>
+                          </div>
+                          {period.notes && <p className="text-xs text-slate-400 mt-2 ml-8">{period.notes}</p>}
+                        </CardContent>
+                      </Card>
+                    )
+                  })}
+                  {/* Suma */}
+                  <Card className="bg-slate-50">
+                    <CardContent className="p-4 flex justify-between items-center">
+                      <span className="font-semibold text-slate-700">Łącznie rozliczone</span>
+                      <span className="font-bold text-slate-900 text-lg">
+                        {formatCurrency(settlementPeriods.reduce((s, p) => s + (p.total_claimed ?? 0), 0))}
+                      </span>
+                    </CardContent>
+                  </Card>
+                </div>
+              ) : (
+                <Card>
+                  <CardContent className="py-8 text-center text-slate-500">
+                    <p>Brak okresów rozliczeniowych.</p>
+                  </CardContent>
+                </Card>
+              )}
             </TabsContent>
           </Tabs>
         </main>
