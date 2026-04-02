@@ -330,7 +330,15 @@ export default function TasksPage() {
 
                       {/* Budget lines / Podzadania */}
                       <div className="mt-4">
-                        <h4 className="text-sm font-semibold text-slate-700 mb-2">Podzadania budżetowe</h4>
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="text-sm font-semibold text-slate-700">Podzadania budżetowe</h4>
+                          <Link href={`/projects/${projectId}/events/new?task_id=${task.id}`}>
+                            <Button variant="outline" size="sm" className="h-7 text-xs gap-1">
+                              <Plus className="w-3 h-3" />
+                              Dodaj zdarzenie
+                            </Button>
+                          </Link>
+                        </div>
                         {task.budget_lines?.length > 0 ? (
                           <table className="w-full text-sm">
                             <thead>
@@ -340,6 +348,7 @@ export default function TasksPage() {
                                 <th className="text-left pb-2 font-medium">Wykonawca</th>
                                 <th className="text-right pb-2 font-medium">Pula (h)</th>
                                 <th className="text-right pb-2 font-medium">Kwota</th>
+                                <th className="pb-2"></th>
                               </tr>
                             </thead>
                             <tbody>
@@ -385,6 +394,13 @@ export default function TasksPage() {
                                       )}
                                     </td>
                                     <td className="py-2 text-right font-medium">{line.amount_planned ? formatCurrency(line.amount_planned) : "—"}</td>
+                                    <td className="py-2 text-right">
+                                      <Link href={`/projects/${projectId}/events/new?task_id=${task.id}&budget_line_id=${line.id}`}>
+                                        <Button variant="ghost" size="sm" className="h-6 text-xs text-blue-600 hover:text-blue-800 px-2">
+                                          + zdarzenie
+                                        </Button>
+                                      </Link>
+                                    </td>
                                   </tr>
                                 )
                               })}
