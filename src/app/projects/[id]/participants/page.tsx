@@ -20,8 +20,9 @@ import {
 } from "@/components/ui/dialog"
 import { degurbaLabel, formatDateShort, genderLabel } from "@/lib/utils"
 import { toast } from "sonner"
-import { Plus, Upload, Search, Users, Loader2, UserCircle, X } from "lucide-react"
-import type { Participant, Project } from "@/lib/types"
+import { Plus, Upload, Search, Users, Loader2, UserCircle, X, FileText, Trash2, Download, FolderOpen } from "lucide-react"
+import Link from "next/link"
+import type { Participant, Project, ParticipantDocument, DocumentType } from "@/lib/types"
 
 // SL CSV column mapping
 const SL_COLUMNS = [
@@ -63,6 +64,20 @@ export default function ParticipantsPage() {
   const [addDialog, setAddDialog] = useState(false)
   const [importDialog, setImportDialog] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [supportDialog, setSupportDialog] = useState<string | null>(null) // participant id
+  const [events, setEvents] = useState<{ id: string; name: string; planned_date?: string | null; task?: { number: number } | null }[]>([])
+  const [selectedEventId, setSelectedEventId] = useState("")
+  const [addingSupport, setAddingSupport] = useState(false)
+
+  // Documents
+  const [docsDialog, setDocsDialog] = useState<Participant | null>(null)
+  const [docs, setDocs] = useState<ParticipantDocument[]>([])
+  const [docTypes, setDocTypes] = useState<DocumentType[]>([])
+  const [docCounts, setDocCounts] = useState<Record<string, number>>({})
+  const [loadingDocs, setLoadingDocs] = useState(false)
+  const [uploadingDoc, setUploadingDoc] = useState(false)
+  const [newDoc, setNewDoc] = useState({ name: "", document_type_id: "", notes: "" })
+  const docFileRef = useRef<HTMLInputElement>(null)
 
   const [csvPreview, setCsvPreview] = useState<string[][]>([])
   const [csvRaw, setCsvRaw] = useState<string>("")
@@ -78,6 +93,9 @@ export default function ParticipantsPage() {
 
   useEffect(() => {
     fetchData()
+    fetchEvents()
+    fetchDocTypes()
+    fetchDocCounts()
   }, [projectId])
 
   async function fetchData() {
@@ -88,6 +106,124 @@ export default function ParticipantsPage() {
     setProject(projectRes.data)
     setParticipants(participantsRes.data ?? [])
     setLoading(false)
+  }
+
+  async function fetchEvents() {
+    const { data } = await supabase
+      .from("events")
+      .select("id, name, planned_date, task:tasks(number)")
+      .eq("project_id", projectId)
+      .not("status", "eq", "settled")
+      .order("planned_date", { ascending: false })
+    setEvents((data ?? []) as unknown as typeof events)
+  }
+
+  async function fetchDocTypes() {
+    const { data } = await supabase
+      .from("document_types")
+      .select("*")
+      .eq("project_id", projectId)
+      .order("sort_order")
+    setDocTypes(data ?? [])
+  }
+
+  async function fetchDocCounts() {
+    const { data } = await supabase
+      .from("participant_documents")
+      .select("participant_id")
+      .eq("project_id", projectId)
+    if (!data) return
+    const counts: Record<string, number> = {}
+    for (const row of data) {
+      counts[row.participant_id] = (counts[row.participant_id] ?? 0) + 1
+    }
+    setDocCounts(counts)
+  }
+
+  async function openDocs(p: Participant) {
+    setDocsDialog(p)
+    setLoadingDocs(true)
+    setNewDoc({ name: "", document_type_id: "", notes: "" })
+    const { data } = await supabase
+      .from("participant_documents")
+      .select("*, document_type:document_types(id,name)")
+      .eq("participant_id", p.id)
+      .order("uploaded_at", { ascending: false })
+    setDocs((data ?? []) as unknown as ParticipantDocument[])
+    setLoadingDocs(false)
+  }
+
+  async function handleUploadDoc(file: File) {
+    if (!docsDialog) return
+    setUploadingDoc(true)
+    try {
+      // Upload do Supabase Storage
+      const ext = file.name.split(".").pop()
+      const storagePath = `${projectId}/${docsDialog.id}/${Date.now()}_${file.name}`
+      const { error: upErr } = await supabase.storage
+        .from("participant-documents")
+        .upload(storagePath, file, { upsert: false })
+      if (upErr) { toast.error("Błąd uploadu: " + upErr.message); setUploadingDoc(false); return }
+
+      const { data: urlData } = supabase.storage
+        .from("participant-documents")
+        .getPublicUrl(storagePath)
+
+      const docName = newDoc.name.trim() || file.name.replace(/\.[^/.]+$/, "")
+      const { data: inserted, error: insErr } = await supabase
+        .from("participant_documents")
+        .insert({
+          participant_id: docsDialog.id,
+          project_id: projectId,
+          document_type_id: newDoc.document_type_id || null,
+          name: docName,
+          file_url: urlData.publicUrl,
+          file_name: file.name,
+          file_size: file.size,
+          mime_type: file.type || `application/${ext}`,
+          notes: newDoc.notes || null,
+        })
+        .select("*, document_type:document_types(id,name)")
+        .single()
+
+      if (insErr) { toast.error("Błąd zapisu: " + insErr.message); setUploadingDoc(false); return }
+      setDocs(prev => [inserted as unknown as ParticipantDocument, ...prev])
+      setDocCounts(prev => ({ ...prev, [docsDialog.id]: (prev[docsDialog.id] ?? 0) + 1 }))
+      setNewDoc({ name: "", document_type_id: "", notes: "" })
+      toast.success("Dokument dodany!")
+    } finally {
+      setUploadingDoc(false)
+    }
+  }
+
+  async function handleDeleteDoc(doc: ParticipantDocument) {
+    if (!confirm(`Usunąć dokument "${doc.name}"?`)) return
+    // Usuń z storage jeśli mamy ścieżkę
+    if (doc.file_url) {
+      const path = doc.file_url.split("/participant-documents/")[1]
+      if (path) await supabase.storage.from("participant-documents").remove([path])
+    }
+    const { error } = await supabase.from("participant_documents").delete().eq("id", doc.id)
+    if (error) { toast.error("Błąd: " + error.message); return }
+    setDocs(prev => prev.filter(d => d.id !== doc.id))
+    if (docsDialog) setDocCounts(prev => ({ ...prev, [docsDialog.id]: Math.max(0, (prev[docsDialog.id] ?? 1) - 1) }))
+    toast.success("Usunięto.")
+  }
+
+  const handleAddSupport = async () => {
+    if (!supportDialog || !selectedEventId) return
+    setAddingSupport(true)
+    const { error } = await supabase.from("event_participants").upsert({
+      event_id: selectedEventId,
+      participant_id: supportDialog,
+      status: "planned",
+      send_invitation: false,
+    }, { onConflict: "event_id,participant_id", ignoreDuplicates: true })
+    setAddingSupport(false)
+    if (error) { toast.error("Błąd: " + error.message); return }
+    toast.success("Uczestnik przypisany do zdarzenia!")
+    setSupportDialog(null)
+    setSelectedEventId("")
   }
 
   const filtered = participants.filter((p) => {
@@ -329,6 +465,8 @@ export default function ParticipantsPage() {
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Status zawod.</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Wsparcie od</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Źródło</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Dokumenty</th>
+                    <th className="px-4 py-3"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -388,6 +526,26 @@ export default function ParticipantsPage() {
                             {p.source === "import" ? "SL" : "Ręcznie"}
                           </Badge>
                         </td>
+                        <td className="px-4 py-3">
+                          <button
+                            onClick={() => openDocs(p)}
+                            className="flex items-center gap-1 text-xs text-slate-600 hover:text-blue-600 transition-colors"
+                          >
+                            <FolderOpen className="w-3.5 h-3.5" />
+                            {docCounts[p.id] ? (
+                              <span className="font-medium text-blue-600">{docCounts[p.id]}</span>
+                            ) : (
+                              <span className="text-slate-400">—</span>
+                            )}
+                          </button>
+                        </td>
+                        <td className="px-4 py-3">
+                          <Link href={`/projects/${projectId}/events/new?participant_id=${p.id}`}>
+                            <Button size="sm" variant="outline" className="h-7 text-xs">
+                              + Wsparcie
+                            </Button>
+                          </Link>
+                        </td>
                       </tr>
                     ))
                   )}
@@ -397,6 +555,40 @@ export default function ParticipantsPage() {
           </Card>
         </main>
       </div>
+
+      {/* Add support dialog */}
+      <Dialog open={!!supportDialog} onOpenChange={open => { if (!open) setSupportDialog(null) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Dodaj wsparcie uczestnika</DialogTitle>
+          </DialogHeader>
+          <div className="py-2 space-y-3">
+            <p className="text-sm text-slate-600">
+              Wybierz zdarzenie, do którego chcesz przypisać uczestnika:
+            </p>
+            <Select value={selectedEventId} onValueChange={v => setSelectedEventId(v ?? "")}>
+              <SelectTrigger>
+                <SelectValue placeholder="Wybierz zdarzenie..." />
+              </SelectTrigger>
+              <SelectContent>
+                {events.map(ev => (
+                  <SelectItem key={ev.id} value={ev.id}>
+                    {ev.task ? `Zad.${ev.task.number} · ` : ""}{ev.name}
+                    {ev.planned_date ? ` (${ev.planned_date.slice(0, 10)})` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSupportDialog(null)}>Anuluj</Button>
+            <Button onClick={handleAddSupport} disabled={!selectedEventId || addingSupport}>
+              {addingSupport ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}
+              Przypisz
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Add participant dialog */}
       <Dialog open={addDialog} onOpenChange={setAddDialog}>
@@ -549,6 +741,163 @@ export default function ParticipantsPage() {
                 </>
               )}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Documents dialog */}
+      <Dialog open={!!docsDialog} onOpenChange={open => { if (!open) setDocsDialog(null) }}>
+        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="w-5 h-5 text-blue-600" />
+              Dokumenty — {docsDialog?.first_name} {docsDialog?.last_name}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto space-y-4 py-2">
+            {/* Upload nowego dokumentu */}
+            <div className="border rounded-lg p-4 space-y-3 bg-slate-50">
+              <p className="text-sm font-medium text-slate-700">Dodaj dokument</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs">Typ dokumentu</Label>
+                  <Select value={newDoc.document_type_id} onValueChange={v => setNewDoc(d => ({ ...d, document_type_id: v ?? "" }))}>
+                    <SelectTrigger className="h-9 text-sm">
+                      <SelectValue placeholder="— wybierz —" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">Bez kategorii</SelectItem>
+                      {docTypes.map(dt => (
+                        <SelectItem key={dt.id} value={dt.id}>
+                          {dt.required ? "* " : ""}{dt.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Nazwa (opcjonalna)</Label>
+                  <Input
+                    placeholder="Domyślnie: nazwa pliku"
+                    value={newDoc.name}
+                    onChange={e => setNewDoc(d => ({ ...d, name: e.target.value }))}
+                    className="h-9 text-sm"
+                  />
+                </div>
+                <div className="col-span-2 space-y-1">
+                  <Label className="text-xs">Uwagi</Label>
+                  <Input
+                    placeholder="np. dostarczone 15.01.2026"
+                    value={newDoc.notes}
+                    onChange={e => setNewDoc(d => ({ ...d, notes: e.target.value }))}
+                    className="h-9 text-sm"
+                  />
+                </div>
+              </div>
+              <div
+                className="border-2 border-dashed border-slate-300 rounded-lg p-4 text-center cursor-pointer hover:border-blue-400 transition-colors"
+                onClick={() => docFileRef.current?.click()}
+              >
+                {uploadingDoc ? (
+                  <div className="flex items-center justify-center gap-2 text-blue-600">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span className="text-sm">Przesyłanie...</span>
+                  </div>
+                ) : (
+                  <>
+                    <Upload className="w-6 h-6 mx-auto mb-1 text-slate-400" />
+                    <p className="text-sm text-slate-600">Kliknij i wybierz plik (PDF, DOC, DOCX)</p>
+                  </>
+                )}
+                <input
+                  ref={docFileRef}
+                  type="file"
+                  accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                  className="hidden"
+                  onChange={e => {
+                    const file = e.target.files?.[0]
+                    if (file) handleUploadDoc(file)
+                    e.target.value = ""
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Lista dokumentów */}
+            {loadingDocs ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+              </div>
+            ) : docs.length === 0 ? (
+              <div className="text-center py-8 text-slate-400">
+                <FileText className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                <p className="text-sm">Brak dokumentów dla tego uczestnika</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">
+                  Wgrane dokumenty ({docs.length})
+                </p>
+                {docs.map(doc => (
+                  <div key={doc.id} className="flex items-center gap-3 p-3 border rounded-lg bg-white hover:bg-slate-50 group">
+                    <FileText className="w-5 h-5 text-slate-400 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-slate-800 truncate">{doc.name}</p>
+                      <div className="flex items-center gap-2 text-xs text-slate-500">
+                        {doc.document_type && (
+                          <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-xs">
+                            {doc.document_type.name}
+                          </span>
+                        )}
+                        {doc.file_name && <span className="truncate">{doc.file_name}</span>}
+                        {doc.file_size && <span>({Math.round(doc.file_size / 1024)} KB)</span>}
+                      </div>
+                      {doc.notes && <p className="text-xs text-slate-400 mt-0.5">{doc.notes}</p>}
+                    </div>
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {doc.file_url && (
+                        <a href={doc.file_url} target="_blank" rel="noopener noreferrer">
+                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0">
+                            <Download className="w-3.5 h-3.5" />
+                          </Button>
+                        </a>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 w-7 p-0 text-red-400 hover:text-red-600"
+                        onClick={() => handleDeleteDoc(doc)}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Wymagane typy — checklistka */}
+            {docTypes.filter(dt => dt.required).length > 0 && (
+              <div className="border rounded-lg p-3 bg-amber-50 border-amber-200">
+                <p className="text-xs font-medium text-amber-800 mb-2">Wymagane dokumenty</p>
+                <div className="space-y-1">
+                  {docTypes.filter(dt => dt.required).map(dt => {
+                    const has = docs.some(d => d.document_type_id === dt.id)
+                    return (
+                      <div key={dt.id} className={`flex items-center gap-2 text-xs ${has ? "text-green-700" : "text-amber-700"}`}>
+                        <span>{has ? "✓" : "○"}</span>
+                        <span>{dt.name}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDocsDialog(null)}>Zamknij</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import React, { useState, useEffect } from "react"
 import { useParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { Sidebar } from "@/components/layout/sidebar"
@@ -39,7 +39,7 @@ interface BudgetLine {
   line_type?: string
   contractor_name?: string
   total_hours?: number
-  hours_used?: number
+  cost_used?: number
 }
 
 interface TaskLocal {
@@ -68,43 +68,66 @@ export default function TasksPage() {
   const [newTask, setNewTask] = useState({ number: "", name: "", description: "", budget_direct: "", budget_indirect: "" })
   const [savingTask, setSavingTask] = useState(false)
   const [expenses, setExpenses] = useState<Record<string, number>>({})
+  const [expandedContracts, setExpandedContracts] = useState<Set<string>>(new Set())
+  const [contracts, setContracts] = useState<{ id: string; name: string; status: string; amount?: number | null; date_from?: string | null; date_to?: string | null; task_id?: string | null; budget_line_id?: string | null; contractor?: { name: string } | null }[]>([])
 
   useEffect(() => {
     fetchData()
   }, [projectId])
 
   async function fetchData() {
-    const [projectRes, tasksRes, expensesRes, eventsRes] = await Promise.all([
+    const [projectRes, tasksRes, expensesRes, eventsRes, contractsRes] = await Promise.all([
       supabase.from("projects").select("*").eq("id", projectId).single(),
       supabase.from("tasks").select("*, budget_lines(*)").eq("project_id", projectId).order("number"),
-      supabase.from("expenses").select("task_id, amount").eq("project_id", projectId).in("status", ["invoiced", "paid", "settled"]),
-      supabase.from("events").select("budget_line_id, planned_hours").eq("project_id", projectId).not("budget_line_id", "is", null),
+      supabase.from("expenses").select("task_id, budget_line_id, amount").eq("project_id", projectId).in("status", ["invoiced", "paid", "settled"]),
+      supabase.from("events").select("budget_line_id, planned_cost").eq("project_id", projectId).not("budget_line_id", "is", null),
+      supabase.from("contracts").select("id, name, status, amount, date_from, date_to, task_id, budget_line_id, contractor:contractors(name)").eq("project_id", projectId),
     ])
 
     setProject(projectRes.data)
+    setContracts((contractsRes.data ?? []) as unknown as typeof contracts)
 
-    // Sumuj planned_hours per budget_line_id
-    const hoursUsed: Record<string, number> = {}
-    eventsRes.data?.forEach((ev: { budget_line_id: string | null; planned_hours: number | null }) => {
+    // Sumuj planned_cost z eventów per budget_line_id
+    const costFromEvents: Record<string, number> = {}
+    eventsRes.data?.forEach((ev: { budget_line_id: string | null; planned_cost: number | null }) => {
       if (ev.budget_line_id) {
-        hoursUsed[ev.budget_line_id] = (hoursUsed[ev.budget_line_id] ?? 0) + (ev.planned_hours ?? 0)
+        costFromEvents[ev.budget_line_id] = (costFromEvents[ev.budget_line_id] ?? 0) + (ev.planned_cost ?? 0)
       }
     })
 
-    const tasksWithHours = (tasksRes.data ?? []).map((t) => ({
-      ...t,
-      budget_lines: (t.budget_lines ?? []).map((l: BudgetLine) => ({
-        ...l,
-        hours_used: hoursUsed[l.id] ?? 0,
-      })),
-    }))
-
-    setTasks(tasksWithHours)
-
+    // Sumuj wydatki per task_id i per budget_line_id
     const exp: Record<string, number> = {}
-    expensesRes.data?.forEach((e: { task_id: string | null; amount: number }) => {
+    const costFromExpensesByLine: Record<string, number> = {}
+    expensesRes.data?.forEach((e: { task_id: string | null; budget_line_id: string | null; amount: number }) => {
       if (e.task_id) exp[e.task_id] = (exp[e.task_id] ?? 0) + e.amount
+      if (e.budget_line_id) {
+        costFromExpensesByLine[e.budget_line_id] = (costFromExpensesByLine[e.budget_line_id] ?? 0) + e.amount
+      }
     })
+
+    // Dla każdego zadania: rozdziel wydatki task-level proporcjonalnie na podzadania
+    const tasksData = (tasksRes.data ?? []).map((t) => {
+      const lines: BudgetLine[] = t.budget_lines ?? []
+      const taskSpent = exp[t.id] ?? 0
+      const totalLinesBudget = lines.reduce((s: number, l: BudgetLine) => s + (l.amount_planned ?? 0), 0)
+
+      return {
+        ...t,
+        budget_lines: lines.map((l: BudgetLine) => {
+          const fromEvents = costFromEvents[l.id] ?? 0
+          const fromExpensesDirect = costFromExpensesByLine[l.id] ?? 0
+          // Wydatki task-level rozłożone proporcjonalnie (tylko jeśli nie ma bezpośrednich)
+          const proportion = totalLinesBudget > 0 ? (l.amount_planned ?? 0) / totalLinesBudget : 0
+          const fromTaskProportional = fromExpensesDirect === 0 ? taskSpent * proportion : 0
+          return {
+            ...l,
+            cost_used: fromEvents + fromExpensesDirect + fromTaskProportional,
+          }
+        }),
+      }
+    })
+
+    setTasks(tasksData)
     setExpenses(exp)
     setLoading(false)
   }
@@ -179,10 +202,21 @@ export default function TasksPage() {
               <ArrowLeft className="w-4 h-4" />
               Wróć do projektu
             </Link>
-            <Button onClick={() => setShowNewTask(true)} size="sm">
-              <Plus className="w-4 h-4 mr-1" />
-              Dodaj zadanie
-            </Button>
+            <div className="flex gap-2">
+              <Link href={`/projects/${projectId}/contractors`}>
+                <Button variant="outline" size="sm">Wykonawcy</Button>
+              </Link>
+              <Link href={`/projects/${projectId}/contracts`}>
+                <Button variant="outline" size="sm">Umowy</Button>
+              </Link>
+              <Link href={`/projects/${projectId}/settlement`}>
+                <Button variant="outline" size="sm">Rozliczenie</Button>
+              </Link>
+              <Button onClick={() => setShowNewTask(true)} size="sm">
+                <Plus className="w-4 h-4 mr-1" />
+                Dodaj zadanie
+              </Button>
+            </div>
           </div>
 
           {/* Summary */}
@@ -345,20 +379,27 @@ export default function TasksPage() {
                               <tr className="text-xs text-slate-500 border-b">
                                 <th className="text-left pb-2 font-medium">Nr / Nazwa</th>
                                 <th className="text-left pb-2 font-medium">Typ</th>
-                                <th className="text-left pb-2 font-medium">Wykonawca</th>
-                                <th className="text-right pb-2 font-medium">Pula (h)</th>
-                                <th className="text-right pb-2 font-medium">Kwota</th>
+                                <th className="text-left pb-2 font-medium">Realizator</th>
+                                <th className="text-left pb-2 font-medium">Umowa</th>
+                                <th className="text-right pb-2 font-medium">Wydano / Budżet</th>
                                 <th className="pb-2"></th>
                               </tr>
                             </thead>
                             <tbody>
                               {task.budget_lines.map((line) => {
-                                const hoursTotal = line.total_hours ?? line.quantity_planned ?? 0
-                                const hoursUsed = line.hours_used ?? 0
-                                const hoursLeft = hoursTotal - hoursUsed
-                                const pctUsed = hoursTotal > 0 ? Math.min(100, Math.round((hoursUsed / hoursTotal) * 100)) : 0
+                                const budget = line.amount_planned ?? 0
+                                const used = line.cost_used ?? 0
+                                const pct = budget > 0 ? Math.min(100, Math.round((used / budget) * 100)) : 0
+                                // Umowy powiązane z tym podzadaniem lub z zadaniem ogólnie
+                                const lineContracts = contracts.filter(c =>
+                                  c.budget_line_id === line.id || (!c.budget_line_id && c.task_id === task.id)
+                                )
+                                const hasActive = lineContracts.some(c => c.status === "active")
+                                const contractKey = `${line.id}`
+                                const contractsExpanded = expandedContracts.has(contractKey)
                                 return (
-                                  <tr key={line.id} className="border-b border-slate-50 hover:bg-slate-50">
+                                  <React.Fragment key={line.id}>
+                                  <tr className="border-b border-slate-50 hover:bg-slate-50">
                                     <td className="py-2">
                                       {line.sub_number && (
                                         <span className="text-xs font-mono text-slate-400 mr-1">{line.sub_number}</span>
@@ -375,25 +416,49 @@ export default function TasksPage() {
                                       )}
                                     </td>
                                     <td className="py-2 text-slate-500 text-xs">{line.contractor_name ?? "—"}</td>
-                                    <td className="py-2 text-right">
-                                      {hoursTotal > 0 ? (
-                                        <div className="flex flex-col items-end gap-0.5">
-                                          <span className="text-xs font-medium">
-                                            {hoursLeft}h / {hoursTotal}h
-                                          </span>
-                                          <div className="w-16 h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                                            <div
-                                              className={`h-full rounded-full ${pctUsed > 90 ? "bg-red-500" : pctUsed > 70 ? "bg-amber-500" : "bg-green-500"}`}
-                                              style={{ width: `${pctUsed}%` }}
-                                            />
-                                          </div>
-                                          <span className="text-xs text-slate-400">{pctUsed}% użyte</span>
-                                        </div>
+                                    <td className="py-2">
+                                      {lineContracts.length === 0 ? (
+                                        <a href={`/projects/${projectId}/contracts`} target="_blank" rel="noopener noreferrer" className="text-xs text-slate-400 hover:text-blue-600">+ umowa</a>
                                       ) : (
-                                        <span className="text-slate-400">—</span>
+                                        <div className="flex items-center gap-1">
+                                          <button
+                                            type="button"
+                                            onClick={() => setExpandedContracts(prev => {
+                                              const next = new Set(prev)
+                                              next.has(contractKey) ? next.delete(contractKey) : next.add(contractKey)
+                                              return next
+                                            })}
+                                            className="flex items-center gap-1 text-xs"
+                                          >
+                                            {hasActive ? (
+                                              <span className="bg-green-100 text-green-700 px-1.5 py-0.5 rounded">Aktywna ✓</span>
+                                            ) : (
+                                              <a href={`/projects/${projectId}/contracts`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded hover:bg-amber-200">⚠ Brak aktywnej +</a>
+                                            )}
+                                            <span className="text-slate-400">{contractsExpanded ? "▲" : "▼"}</span>
+                                          </button>
+                                        </div>
                                       )}
                                     </td>
-                                    <td className="py-2 text-right font-medium">{line.amount_planned ? formatCurrency(line.amount_planned) : "—"}</td>
+                                    <td className="py-2 text-right">
+                                      <div className="flex flex-col items-end gap-0.5">
+                                        <span className="text-xs font-medium text-slate-700">
+                                          {used > 0 ? formatCurrency(used) : <span className="text-slate-400">0 zł</span>}
+                                          {" "}<span className="text-slate-400 font-normal">/ {budget > 0 ? formatCurrency(budget) : "—"}</span>
+                                        </span>
+                                        {budget > 0 && (
+                                          <>
+                                            <div className="w-24 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                              <div
+                                                className={`h-full rounded-full ${pct > 90 ? "bg-red-500" : pct > 70 ? "bg-amber-500" : pct > 0 ? "bg-blue-500" : "bg-slate-300"}`}
+                                                style={{ width: `${pct}%` }}
+                                              />
+                                            </div>
+                                            <span className="text-xs text-slate-400">{pct}%</span>
+                                          </>
+                                        )}
+                                      </div>
+                                    </td>
                                     <td className="py-2 text-right">
                                       <Link href={`/projects/${projectId}/events/new?task_id=${task.id}&budget_line_id=${line.id}`}>
                                         <Button variant="ghost" size="sm" className="h-6 text-xs text-blue-600 hover:text-blue-800 px-2">
@@ -402,6 +467,23 @@ export default function TasksPage() {
                                       </Link>
                                     </td>
                                   </tr>
+                                  {contractsExpanded && lineContracts.map(c => (
+                                    <tr key={c.id} className="bg-slate-50 border-b border-slate-100">
+                                      <td colSpan={3} className="py-1.5 pl-8 text-xs text-slate-600">
+                                        <span className={`mr-2 px-1.5 py-0.5 rounded text-xs ${c.status === "active" ? "bg-green-100 text-green-700" : c.status === "completed" ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-500"}`}>
+                                          {c.status === "active" ? "Aktywna" : c.status === "completed" ? "Zakończona" : "Szkic"}
+                                        </span>
+                                        <strong>{c.name}</strong>
+                                        {c.contractor && <span className="text-slate-400 ml-1">· {c.contractor.name}</span>}
+                                        {c.date_from && <span className="text-slate-400 ml-1">· {c.date_from.slice(0,10)}{c.date_to ? ` – ${c.date_to.slice(0,10)}` : ""}</span>}
+                                      </td>
+                                      <td className="py-1.5 text-xs text-slate-500">{c.amount ? formatCurrency(c.amount) : "—"}</td>
+                                      <td colSpan={2} className="py-1.5 text-right pr-2">
+                                        <Link href={`/projects/${projectId}/contracts?edit=${c.id}`} className="text-xs text-blue-600 hover:underline">edytuj</Link>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                  </React.Fragment>
                                 )
                               })}
                             </tbody>

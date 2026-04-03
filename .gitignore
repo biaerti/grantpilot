@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Dane osobowe uczestników i dokumenty rozliczeniowe — nie commitować
+/Uczestnicy-projektow/
+/Wnioski rozliczeniowe/
+/csv-z-airtable/

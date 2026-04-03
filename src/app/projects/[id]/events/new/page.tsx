@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
-import { ArrowLeft, Loader2, X } from "lucide-react"
+import { ArrowLeft, Loader2, X, RefreshCw } from "lucide-react"
 import Link from "next/link"
 import type { Task } from "@/lib/types"
 
@@ -49,6 +49,13 @@ interface SupportForm {
   rate_room?: number
 }
 
+interface ContractMin {
+  id: string
+  name: string
+  contractor?: { name: string } | null
+  task_id?: string | null
+}
+
 export default function NewEventPage() {
   const params = useParams<{ id: string }>()
   const projectId = params.id
@@ -60,10 +67,12 @@ export default function NewEventPage() {
   const [allBudgetLines, setAllBudgetLines] = useState<BudgetLine[]>([])
   const [allSupportForms, setAllSupportForms] = useState<SupportForm[]>([])
   const [allParticipants, setAllParticipants] = useState<ParticipantMin[]>([])
+  const [allContracts, setAllContracts] = useState<ContractMin[]>([])
   const [saving, setSaving] = useState(false)
 
   const [budgetLinesForTask, setBudgetLinesForTask] = useState<BudgetLine[]>([])
   const [supportFormsForTask, setSupportFormsForTask] = useState<SupportForm[]>([])
+  const [sfLinkedIds, setSfLinkedIds] = useState<string[] | null>(null) // null = no filter
 
   const [form, setForm] = useState({
     name: "",
@@ -79,6 +88,7 @@ export default function NewEventPage() {
     planned_hours: "",
     planned_cost: "0",
     executor_name: "",
+    contract_id: "",
     harmonogram_do_urzedu: false,
     notes: "",
     status: "planned",
@@ -92,11 +102,12 @@ export default function NewEventPage() {
   }, [projectId])
 
   async function fetchData() {
-    const [tasksRes, budgetLinesRes, supportFormsRes, participantsRes] = await Promise.all([
+    const [tasksRes, budgetLinesRes, supportFormsRes, participantsRes, contractsRes] = await Promise.all([
       supabase.from("tasks").select("*").eq("project_id", projectId).order("number"),
       supabase.from("budget_lines").select("id, task_id, name, sub_number, line_type, contractor_name, total_hours").eq("project_id", projectId),
       supabase.from("support_forms").select("*").eq("project_id", projectId),
       supabase.from("participants").select("id, first_name, last_name, pesel").eq("project_id", projectId).order("last_name"),
+      supabase.from("contracts").select("id, name, contractor:contractors(name), task_id").eq("project_id", projectId).eq("status", "active"),
     ])
     const fetchedTasks = tasksRes.data ?? []
     const fetchedLines = budgetLinesRes.data ?? []
@@ -105,10 +116,12 @@ export default function NewEventPage() {
     setAllBudgetLines(fetchedLines)
     setAllSupportForms(fetchedForms)
     setAllParticipants(participantsRes.data ?? [])
+    setAllContracts((contractsRes.data ?? []) as unknown as ContractMin[])
 
     // Pre-fill from URL params
     const urlTaskId = searchParams.get("task_id")
     const urlLineId = searchParams.get("budget_line_id")
+    const urlParticipantId = searchParams.get("participant_id")
     if (urlTaskId) {
       const lines = fetchedLines.filter(l => l.task_id === urlTaskId)
       setBudgetLinesForTask(lines)
@@ -118,6 +131,9 @@ export default function NewEventPage() {
         task_id: urlTaskId,
         budget_line_id: urlLineId ?? "",
       }))
+    }
+    if (urlParticipantId) {
+      setSelectedParticipants([urlParticipantId])
     }
   }
 
@@ -130,6 +146,23 @@ export default function NewEventPage() {
     setForm(prev => ({ ...prev, task_id: taskId, budget_line_id: "", support_form_id: "", executor_name: "" }))
     setBudgetLinesForTask(allBudgetLines.filter(l => l.task_id === taskId))
     setSupportFormsForTask(allSupportForms.filter(sf => sf.task_id === taskId))
+    setSfLinkedIds(null)
+  }
+
+  const handleBudgetLineChange = async (lineId: string | null) => {
+    if (!lineId) return
+    handleChange("budget_line_id", lineId)
+    handleChange("support_form_id", "")
+    // Fetch which support_forms are linked to this budget_line
+    const { data } = await supabase
+      .from("support_form_budget_lines")
+      .select("support_form_id")
+      .eq("budget_line_id", lineId)
+    if (data && data.length > 0) {
+      setSfLinkedIds(data.map((r: { support_form_id: string }) => r.support_form_id))
+    } else {
+      setSfLinkedIds(null) // no mapping = show all for task
+    }
   }
 
   const handleSupportFormChange = (sfId: string | null) => {
@@ -169,7 +202,12 @@ export default function NewEventPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!form.name) { toast.error("Podaj nazwę zdarzenia."); return }
+    const autoName = form.name ||
+      (selectedSF && selectedTask
+        ? `${selectedSF.support_type ?? selectedSF.name} – Zad.${selectedTask.number}`
+        : selectedTask
+        ? `Zdarzenie – Zad.${selectedTask.number}`
+        : "Nowe zdarzenie")
     setSaving(true)
 
     // Determine event type from support form or line_type
@@ -187,7 +225,7 @@ export default function NewEventPage() {
         task_id: form.task_id || null,
         budget_line_id: form.budget_line_id || null,
         support_form_id: form.support_form_id || null,
-        name: form.name,
+        name: autoName,
         type: eventType,
         status: form.status,
         planned_date: form.planned_date || null,
@@ -199,6 +237,7 @@ export default function NewEventPage() {
         planned_hours: parseFloat(form.planned_hours) || null,
         planned_cost: parseFloat(form.planned_cost) || 0,
         executor_name: form.executor_name || null,
+        contract_id: form.contract_id || null,
         harmonogram_do_urzedu: form.harmonogram_do_urzedu,
         notes: form.notes || null,
       })
@@ -256,7 +295,9 @@ export default function NewEventPage() {
                     <Label>Zadanie projektowe *</Label>
                     <Select value={form.task_id} onValueChange={handleTaskChange}>
                       <SelectTrigger>
-                        <SelectValue placeholder="Wybierz zadanie..." />
+                        <SelectValue placeholder="Wybierz zadanie...">
+                          {selectedTask ? `Zad. ${selectedTask.number}: ${selectedTask.name}` : "Wybierz zadanie..."}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {tasks.map(task => (
@@ -273,20 +314,23 @@ export default function NewEventPage() {
                     <div className="space-y-2">
                       <Label>Podzadanie budżetowe</Label>
                       {budgetLinesForTask.length === 0 ? (
-                        <p className="text-sm text-slate-400">Brak podzadań – uruchom seed-pns.mjs</p>
+                        <p className="text-sm text-slate-400">Brak podzadań dla tego zadania</p>
                       ) : (
-                        <Select value={form.budget_line_id} onValueChange={v => handleChange("budget_line_id", v)}>
+                        <Select value={form.budget_line_id} onValueChange={handleBudgetLineChange}>
                           <SelectTrigger>
-                            <SelectValue placeholder="Wybierz pozycję budżetową..." />
+                            <SelectValue placeholder="Wybierz pozycję budżetową...">
+                              {selectedLine
+                                ? `${selectedLine.sub_number} – ${selectedLine.name} [${selectedLine.line_type === "W" ? "W" : "S"}${selectedLine.contractor_name ? " · " + selectedLine.contractor_name : ""}]`
+                                : "Wybierz pozycję budżetową..."}
+                            </SelectValue>
                           </SelectTrigger>
-                          <SelectContent>
+                          <SelectContent className="max-w-lg">
                             {budgetLinesForTask.map(line => (
                               <SelectItem key={line.id} value={line.id}>
-                                <span className="font-mono text-slate-500 mr-1 text-xs">{line.sub_number}</span>
+                                <span className="font-mono text-slate-400 text-xs mr-2">{line.sub_number}</span>
                                 {line.name}
                                 <span className="text-slate-400 ml-1 text-xs">
-                                  [{line.line_type === "W" ? "W" : "S"}
-                                  {line.contractor_name ? ` · ${line.contractor_name}` : ""}]
+                                  [{line.line_type === "W" ? "W" : "S"}{line.contractor_name ? ` · ${line.contractor_name}` : ""}]
                                 </span>
                               </SelectItem>
                             ))}
@@ -300,24 +344,33 @@ export default function NewEventPage() {
                   {form.task_id && (
                     <div className="space-y-2">
                       <Label>Forma wsparcia</Label>
-                      {supportFormsForTask.length === 0 ? (
-                        <p className="text-sm text-slate-400">Brak form wsparcia dla tego zadania</p>
-                      ) : (
-                        <Select value={form.support_form_id} onValueChange={handleSupportFormChange}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Wybierz formę wsparcia..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {supportFormsForTask.map(sf => (
-                              <SelectItem key={sf.id} value={sf.id}>
-                                {sf.support_type ?? sf.name}
-                                {sf.meeting_type && ` · ${sf.meeting_type}`}
-                                {sf.hours_per_meeting ? ` · ${sf.hours_per_meeting}h` : ""}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      )}
+                      {(() => {
+                        const filteredSFs = sfLinkedIds
+                          ? supportFormsForTask.filter(sf => sfLinkedIds.includes(sf.id))
+                          : supportFormsForTask
+                        return filteredSFs.length === 0 ? (
+                          <p className="text-sm text-slate-400">Brak form wsparcia{sfLinkedIds ? " dla tego podzadania" : " dla tego zadania"}</p>
+                        ) : (
+                          <Select value={form.support_form_id} onValueChange={handleSupportFormChange}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Wybierz formę wsparcia...">
+                                {selectedSF
+                                  ? `${selectedSF.support_type ?? selectedSF.name}${selectedSF.meeting_type ? " · " + selectedSF.meeting_type : ""}${selectedSF.hours_per_meeting ? " · " + selectedSF.hours_per_meeting + "h" : ""}`
+                                  : "Wybierz formę wsparcia..."}
+                              </SelectValue>
+                            </SelectTrigger>
+                            <SelectContent>
+                              {filteredSFs.map(sf => (
+                                <SelectItem key={sf.id} value={sf.id}>
+                                  {sf.support_type ?? sf.name}
+                                  {sf.meeting_type && ` · ${sf.meeting_type}`}
+                                  {sf.hours_per_meeting ? ` · ${sf.hours_per_meeting}h` : ""}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )
+                      })()}
                       {selectedSF && (
                         <div className="text-xs text-slate-500 bg-slate-50 rounded p-2 flex gap-4">
                           {selectedSF.rate_executor && <span>Stawka: {selectedSF.rate_executor} zł/h</span>}
@@ -362,6 +415,47 @@ export default function NewEventPage() {
                       })()}
                     </div>
                   )}
+
+                  {/* Umowa – powiązanie z wykonawcą */}
+                  {form.task_id && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label>Umowa (do rozliczenia)</Label>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const { data } = await supabase.from("contracts").select("id, name, contractor:contractors(name), task_id").eq("project_id", projectId).eq("status", "active")
+                              setAllContracts((data ?? []) as unknown as ContractMin[])
+                              toast.success("Umowy odświeżone")
+                            }}
+                            className="text-xs text-slate-400 hover:text-slate-600 flex items-center gap-1"
+                            title="Odśwież listę umów"
+                          >
+                            <RefreshCw className="w-3 h-3" />
+                            Odśwież
+                          </button>
+                          <a href={`/projects/${projectId}/contracts`} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">+ Dodaj umowę</a>
+                        </div>
+                      </div>
+                      <Select value={form.contract_id} onValueChange={v => handleChange("contract_id", v)}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Wybierz umowę...">
+                            {form.contract_id
+                              ? (() => { const c = allContracts.find(x => x.id === form.contract_id); return c ? `${c.name}${c.contractor ? " · " + c.contractor.name : ""}` : "Wybierz umowę..." })()
+                              : "Wybierz umowę..."}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {allContracts.filter(c => !c.task_id || c.task_id === form.task_id).map(c => (
+                            <SelectItem key={c.id} value={c.id}>
+                              {c.name}{c.contractor ? ` · ${c.contractor.name}` : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 
@@ -372,17 +466,16 @@ export default function NewEventPage() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="name">Nazwa zdarzenia *</Label>
+                    <Label htmlFor="name">Nazwa zdarzenia <span className="text-slate-400 font-normal text-xs">(opcjonalna – zostanie wygenerowana automatycznie)</span></Label>
                     <Input
                       id="name"
                       placeholder={
                         selectedSF && selectedTask
-                          ? `${selectedSF.support_type ?? selectedSF.name} – Zad.${selectedTask.number} – sesja 1`
+                          ? `${selectedSF.support_type ?? selectedSF.name} – Zad.${selectedTask.number}`
                           : "np. Warsztaty dla kobiet – edycja 3"
                       }
                       value={form.name}
                       onChange={e => handleChange("name", e.target.value)}
-                      required
                     />
                   </div>
 
@@ -439,31 +532,44 @@ export default function NewEventPage() {
                   <CardTitle>Data i miejsce</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Data planowana</Label>
-                      <Input type="date" value={form.planned_date} onChange={e => handleChange("planned_date", e.target.value)} />
+                  <div className="space-y-1">
+                    <Label className="text-xs text-slate-500 uppercase tracking-wide">Zakres dat</Label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-xs">Data rozpoczęcia</Label>
+                        <Input type="date" value={form.planned_date} onChange={e => handleChange("planned_date", e.target.value)} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Data zakończenia <span className="text-slate-400">(jeśli więcej niż 1 dzień)</span></Label>
+                        <Input type="date" value={form.planned_end_date} onChange={e => handleChange("planned_end_date", e.target.value)} />
+                      </div>
                     </div>
-                    <div className="space-y-2">
-                      <Label>Data zakończenia</Label>
-                      <Input type="date" value={form.planned_end_date} onChange={e => handleChange("planned_end_date", e.target.value)} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Godzina od</Label>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Godzina od</Label>
                       <Input type="time" value={form.start_time} onChange={e => handleChange("start_time", e.target.value)} />
                     </div>
-                    <div className="space-y-2">
-                      <Label>Godzina do</Label>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Godzina do</Label>
                       <Input type="time" value={form.end_time} onChange={e => handleChange("end_time", e.target.value)} />
                     </div>
                   </div>
                   <div className="space-y-2">
                     <Label>Miejsce</Label>
-                    <Input
-                      placeholder="np. ul. Bierutowska 57-59, Wrocław"
-                      value={form.location}
-                      onChange={e => handleChange("location", e.target.value)}
-                    />
+                    <Select value={form.location} onValueChange={v => handleChange("location", v)}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Wybierz salę...">
+                          {form.location || "Wybierz salę..."}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Wrocław | Bierutowska 57-59">Wrocław | Bierutowska 57-59 (40 zł/h)</SelectItem>
+                        <SelectItem value="Wrocław | Kwidzyńska 4">Wrocław | Kwidzyńska 4 (75 zł/h)</SelectItem>
+                        <SelectItem value="Kondratowice | Długa 23">Kondratowice | Długa 23 (40 zł/h)</SelectItem>
+                        <SelectItem value="Wałbrzych | Wyzwolenia 24">Wałbrzych | Wyzwolenia 24 (40 zł/h)</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="flex items-center gap-2">
                     <input
@@ -484,14 +590,16 @@ export default function NewEventPage() {
                   <CardTitle>Uczestnicy</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Planowana liczba uczestników</Label>
-                    <Input
-                      type="number" min="0"
-                      value={form.planned_participants_count}
-                      onChange={e => handleChange("planned_participants_count", e.target.value)}
-                    />
-                  </div>
+                  {form.status !== "accepted" && (
+                    <div className="space-y-2">
+                      <Label>Planowana liczba uczestników</Label>
+                      <Input
+                        type="number" min="0"
+                        value={form.planned_participants_count}
+                        onChange={e => handleChange("planned_participants_count", e.target.value)}
+                      />
+                    </div>
+                  )}
 
                   {selectedParticipantObjects.length > 0 && (
                     <div className="flex flex-wrap gap-1.5">

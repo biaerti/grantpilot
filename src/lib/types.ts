@@ -253,6 +253,32 @@ export interface UserProfile {
   created_at: string
 }
 
+export interface DocumentType {
+  id: string
+  project_id: string
+  name: string
+  description?: string | null
+  required: boolean
+  sort_order: number
+  created_at: string
+}
+
+export interface ParticipantDocument {
+  id: string
+  participant_id: string
+  project_id: string
+  document_type_id?: string | null
+  document_type?: DocumentType | null
+  name: string
+  file_url?: string | null
+  file_name?: string | null
+  file_size?: number | null
+  mime_type?: string | null
+  notes?: string | null
+  uploaded_at: string
+  created_at: string
+}
+
 // Helper types
 export interface ParticipantStats {
   total: number

@@ -28,6 +28,12 @@ import {
   ArrowRight,
   CheckCircle,
   Clock,
+  Building2,
+  FileText,
+  Receipt,
+  UserCheck,
+  ListTodo,
+  FolderOpen,
 } from "lucide-react"
 
 interface PageProps {
@@ -225,6 +231,31 @@ export default async function ProjectDetailPage({ params }: PageProps) {
                 </div>
               </CardContent>
             </Card>
+          </div>
+
+          {/* Quick navigation */}
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
+            {[
+              { label: "Zadania", href: `/projects/${id}/tasks`, icon: ListTodo, desc: "Budżet i podzadania" },
+              { label: "Zdarzenia", href: `/projects/${id}/events`, icon: Calendar, desc: "Lista zdarzeń" },
+              { label: "Uczestnicy", href: `/projects/${id}/participants`, icon: UserCheck, desc: "Lista i wsparcie" },
+              { label: "Wykonawcy", href: `/projects/${id}/contractors`, icon: Building2, desc: "Firma i kontakty" },
+              { label: "Umowy", href: `/projects/${id}/contracts`, icon: FileText, desc: "Umowy z wykonawcami" },
+              { label: "Rozliczenie", href: `/projects/${id}/settlement`, icon: Receipt, desc: "Protokoły miesięczne" },
+              { label: "Dokumenty", href: `/projects/${id}/documents`, icon: FolderOpen, desc: "Dokumenty uczestników" },
+            ].map(({ label, href, icon: Icon, desc }) => (
+              <Link key={label} href={href}>
+                <Card className="hover:border-blue-300 hover:bg-blue-50 transition-colors cursor-pointer h-full">
+                  <CardContent className="p-3 flex items-center gap-3">
+                    <Icon className="w-5 h-5 text-blue-500 flex-shrink-0" />
+                    <div>
+                      <p className="text-sm font-semibold text-slate-800 leading-none">{label}</p>
+                      <p className="text-xs text-slate-400 mt-0.5">{desc}</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+            ))}
           </div>
 
           {/* Mobilization alert */}
