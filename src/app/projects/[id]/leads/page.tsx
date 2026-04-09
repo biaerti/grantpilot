@@ -125,6 +125,7 @@ export default function LeadsPage() {
   const [search, setSearch] = useState("")
   const [filterStatus, setFilterStatus] = useState<LeadStatus | "all">("all")
   const [filterAssigned, setFilterAssigned] = useState("all")
+  const [currentUserInitials, setCurrentUserInitials] = useState("")
 
   // Dialogi
   const [addDialog, setAddDialog] = useState(false)
@@ -207,6 +208,20 @@ export default function LeadsPage() {
   }, [projectId])
 
   useEffect(() => { fetchLeads() }, [fetchLeads])
+
+  // Pobierz inicjały zalogowanego usera
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return
+      supabase.from("user_profiles").select("full_name").eq("id", user.id).single()
+        .then(({ data }) => {
+          if (data?.full_name) {
+            const initials = data.full_name.split(" ").map((w: string) => w[0]).join("").toUpperCase().slice(0, 2)
+            setCurrentUserInitials(initials)
+          }
+        })
+    })
+  }, [])
 
   // Pobierz listę formularzy Tally + zapisany form_id projektu
   useEffect(() => {
@@ -335,6 +350,7 @@ export default function LeadsPage() {
     setReminderForm({
       ...EMPTY_REMINDER,
       remind_at_date: new Date().toISOString().slice(0, 10),
+      assigned_to: currentUserInitials,
     })
     const { data } = await supabase
       .from("reminders")
@@ -542,13 +558,14 @@ export default function LeadsPage() {
                 <div className="flex-1 min-w-48">
                   <Label className="text-xs mb-1 block">Formularz Tally</Label>
                   <Select value={tallyFormId} onValueChange={v => setTallyFormId(v ?? "")}>
-                    <SelectTrigger>
+                    <SelectTrigger className="w-full">
                       <SelectValue placeholder="Wybierz formularz..." />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="max-w-lg">
                       {tallyForms.filter(f => f.numberOfSubmissions > 0).map(f => (
-                        <SelectItem key={f.id} value={f.id}>
-                          {f.name} <span className="text-slate-400">({f.numberOfSubmissions} zgłoszeń)</span>
+                        <SelectItem key={f.id} value={f.id} className="whitespace-normal">
+                          <span className="block">{f.name}</span>
+                          <span className="text-xs text-slate-400">{f.numberOfSubmissions} zgłoszeń</span>
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -1001,12 +1018,25 @@ export default function LeadsPage() {
                   Cały dzień (bez konkretnej godziny)
                 </label>
                 <div>
-                  <Label className="text-xs">Inicjały (kto dzwoni)</Label>
-                  <Input
+                  <Label className="text-xs">Kto dzwoni</Label>
+                  <Select
                     value={reminderForm.assigned_to}
-                    onChange={e => setReminderForm(p => ({ ...p, assigned_to: e.target.value }))}
-                    placeholder="np. BK"
-                  />
+                    onValueChange={v => setReminderForm(p => ({ ...p, assigned_to: v ?? "" }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Wybierz..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Array.from(new Set([
+                        ...(currentUserInitials ? [currentUserInitials] : []),
+                        ...assignees,
+                      ])).map(a => (
+                        <SelectItem key={a} value={a}>
+                          {a}{a === currentUserInitials ? " (ja)" : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div>
                   <Label className="text-xs">Notatka</Label>

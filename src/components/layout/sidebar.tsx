@@ -150,23 +150,6 @@ export function Sidebar({ pendingAccountingCount = 0, pendingRemindersCount }: S
           )
         })()}
 
-        {/* Przypomnienia */}
-        <Link
-          href="/reminders"
-          className={cn(
-            "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
-            pathname.startsWith("/reminders") ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white hover:bg-slate-800"
-          )}
-        >
-          <Bell className="w-5 h-5 flex-shrink-0" />
-          <span className="flex-1">Przypomnienia</span>
-          {remindersCount > 0 && (
-            <Badge variant="destructive" className="h-5 min-w-5 text-xs px-1.5">
-              {remindersCount}
-            </Badge>
-          )}
-        </Link>
-
         {/* Rozliczenia */}
         <Link
           href="/accounting"

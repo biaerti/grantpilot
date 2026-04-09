@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/dialog"
 import { EventStatusBadge } from "@/components/events/event-status-badge"
 import { formatCurrency, eventTypeLabel, formatDate, getProjectHexColor } from "@/lib/utils"
-import { ChevronLeft, ChevronRight, Users, Wallet, MapPin, Bell, Phone } from "lucide-react"
+import { ChevronLeft, ChevronRight, Users, Wallet, MapPin, Bell, Phone, CheckSquare, Clock } from "lucide-react"
 import {
   format,
   startOfMonth,
@@ -62,6 +62,8 @@ function CalendarPageInner() {
   const [hiddenProjects, setHiddenProjects] = useState<Set<string>>(new Set())
   const [reminders, setReminders] = useState<ReminderWithJoin[]>([])
   const [showReminders, setShowReminders] = useState(true)
+  const [reminderUser, setReminderUser] = useState<string>("") // filtr po inicjałach
+  const [currentUser, setCurrentUser] = useState<string>("")  // inicjały zalogowanego
 
   useEffect(() => {
     fetchData()
@@ -77,6 +79,21 @@ function CalendarPageInner() {
   }, [projects, searchParams])
 
   async function fetchData() {
+    // Pobierz inicjały zalogowanego usera z profilu
+    const { data: { user } } = await supabase.auth.getUser()
+    if (user) {
+      const { data: profile } = await supabase
+        .from("user_profiles")
+        .select("full_name")
+        .eq("id", user.id)
+        .single()
+      if (profile?.full_name) {
+        const initials = profile.full_name.split(" ").map((w: string) => w[0]).join("").toUpperCase().slice(0, 2)
+        setCurrentUser(initials)
+        setReminderUser(initials)
+      }
+    }
+
     const [eventsRes, projectsRes, remindersRes] = await Promise.all([
       supabase
         .from("events")
@@ -116,9 +133,20 @@ function CalendarPageInner() {
     })
   }
 
+  const filteredReminders = reminderUser
+    ? reminders.filter(r => r.assigned_to === reminderUser)
+    : reminders
+
   const getRemindersForDay = (date: Date) => {
     if (!showReminders) return []
-    return reminders.filter(r => isSameDay(parseISO(r.remind_at), date))
+    return filteredReminders.filter(r => isSameDay(parseISO(r.remind_at), date))
+  }
+
+  const uniqueReminderUsers = Array.from(new Set(reminders.map(r => r.assigned_to).filter(Boolean)))
+
+  async function markReminderDone(id: string) {
+    await supabase.from("reminders").update({ done: true, done_at: new Date().toISOString() }).eq("id", id)
+    setReminders(prev => prev.filter(r => r.id !== id))
   }
 
   const projectColorMap: Record<string, string> = {}
@@ -266,16 +294,17 @@ function CalendarPageInner() {
               </Card>
             </div>
 
-            {/* Sidebar - project legend */}
-            <div className="w-56 flex-shrink-0 space-y-4">
+            {/* Sidebar - project legend + reminders */}
+            <div className="w-64 flex-shrink-0 space-y-5 overflow-y-auto max-h-full">
+
+              {/* Projekty */}
               <div>
                 <h3 className="text-sm font-semibold text-slate-700 mb-2">Projekty</h3>
-                <div className="space-y-2">
+                <div className="space-y-1">
                   {projects.map((p, idx) => {
                     const color = getProjectHexColor(idx)
                     const isHidden = hiddenProjects.has(p.id)
                     const count = events.filter((e) => e.project_id === p.id).length
-
                     return (
                       <button
                         key={p.id}
@@ -284,36 +313,16 @@ function CalendarPageInner() {
                           isHidden ? "opacity-40" : "hover:bg-slate-100"
                         }`}
                       >
-                        <div
-                          className="w-3 h-3 rounded-sm flex-shrink-0"
-                          style={{ backgroundColor: color }}
-                        />
-                        <span className="text-xs text-slate-700 flex-1 truncate">
-                          {p.short_name ?? p.name}
-                        </span>
+                        <div className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: color }} />
+                        <span className="text-xs text-slate-700 flex-1 truncate">{p.short_name ?? p.name}</span>
                         <span className="text-xs text-slate-400">{count}</span>
                       </button>
                     )
                   })}
-                  {/* Przypomnienia toggle */}
-                  {reminders.length > 0 && (
-                    <button
-                      onClick={() => setShowReminders(p => !p)}
-                      className={`w-full flex items-center gap-2 text-left p-2 rounded-lg transition-colors ${
-                        !showReminders ? "opacity-40" : "hover:bg-slate-100"
-                      }`}
-                    >
-                      <div className="w-3 h-3 rounded-sm flex-shrink-0 bg-amber-400" />
-                      <span className="text-xs text-slate-700 flex-1 truncate flex items-center gap-1">
-                        <Bell className="w-3 h-3" /> Przypomnienia
-                      </span>
-                      <span className="text-xs text-slate-400">{reminders.length}</span>
-                    </button>
-                  )}
                 </div>
               </div>
 
-              {/* Upcoming events */}
+              {/* Najbliższe zdarzenia */}
               <div>
                 <h3 className="text-sm font-semibold text-slate-700 mb-2">Najbliższe zdarzenia</h3>
                 <div className="space-y-2">
@@ -334,6 +343,109 @@ function CalendarPageInner() {
                     ))}
                 </div>
               </div>
+
+              {/* Przypomnienia obdzwonki */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <button
+                    onClick={() => setShowReminders(p => !p)}
+                    className="flex items-center gap-1.5 text-sm font-semibold text-slate-700 hover:text-slate-900"
+                  >
+                    <Bell className="w-3.5 h-3.5 text-amber-500" />
+                    Przypomnienia
+                    {filteredReminders.length > 0 && (
+                      <span className="ml-1 text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">
+                        {filteredReminders.length}
+                      </span>
+                    )}
+                    <span className="text-xs text-slate-400 ml-1">{showReminders ? "▲" : "▼"}</span>
+                  </button>
+                </div>
+
+                {showReminders && (
+                  <>
+                    {/* Filtr użytkownika */}
+                    <div className="flex gap-1 mb-2 flex-wrap">
+                      <button
+                        onClick={() => setReminderUser("")}
+                        className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                          reminderUser === "" ? "bg-slate-700 text-white border-slate-700" : "text-slate-500 border-slate-200 hover:border-slate-400"
+                        }`}
+                      >
+                        Wszyscy
+                      </button>
+                      {uniqueReminderUsers.map(u => (
+                        <button
+                          key={u}
+                          onClick={() => setReminderUser(u === reminderUser ? "" : u)}
+                          className={`text-xs px-2 py-0.5 rounded-full border transition-colors font-mono ${
+                            reminderUser === u ? "bg-amber-500 text-white border-amber-500" : "text-slate-600 border-slate-200 hover:border-amber-300"
+                          }`}
+                        >
+                          {u}
+                          {u === currentUser && <span className="ml-1 opacity-70">(ja)</span>}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Lista przypomnień */}
+                    {filteredReminders.length === 0 ? (
+                      <p className="text-xs text-slate-400 py-2">Brak przypomnień</p>
+                    ) : (
+                      <div className="space-y-1.5 max-h-72 overflow-y-auto">
+                        {filteredReminders.map(rem => {
+                          const remDate = new Date(rem.remind_at)
+                          const isOverdue = remDate < new Date() && !isSameDay(remDate, new Date())
+                          const isToday = isSameDay(remDate, new Date())
+                          return (
+                            <div
+                              key={rem.id}
+                              className={`p-2 rounded-lg border text-xs ${
+                                isOverdue ? "bg-red-50 border-red-200" :
+                                isToday ? "bg-amber-50 border-amber-200" :
+                                "bg-white border-slate-200"
+                              }`}
+                            >
+                              <div className="flex items-start gap-1.5">
+                                <Clock className={`w-3 h-3 mt-0.5 flex-shrink-0 ${isOverdue ? "text-red-500" : isToday ? "text-amber-500" : "text-slate-400"}`} />
+                                <div className="flex-1 min-w-0">
+                                  <Link
+                                    href={`/projects/${rem.project_id}/leads`}
+                                    className="font-medium text-slate-800 hover:text-blue-600 block truncate"
+                                  >
+                                    {rem.participant?.first_name} {rem.participant?.last_name}
+                                  </Link>
+                                  <div className="text-slate-500 mt-0.5">
+                                    {rem.all_day
+                                      ? format(remDate, "d MMM", { locale: pl })
+                                      : format(remDate, "d MMM HH:mm", { locale: pl })
+                                    }
+                                    <span className="ml-1.5 font-mono text-slate-400">{rem.assigned_to}</span>
+                                  </div>
+                                  {rem.note && <p className="text-slate-500 mt-0.5 truncate">{rem.note}</p>}
+                                  {rem.participant?.phone && (
+                                    <a href={`tel:${rem.participant.phone}`} className="text-blue-600 hover:underline flex items-center gap-0.5 mt-0.5">
+                                      <Phone className="w-2.5 h-2.5" />{rem.participant.phone}
+                                    </a>
+                                  )}
+                                </div>
+                                <button
+                                  onClick={() => markReminderDone(rem.id)}
+                                  title="Oznacz jako wykonane"
+                                  className="flex-shrink-0 text-slate-300 hover:text-green-500 transition-colors"
+                                >
+                                  <CheckSquare className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
             </div>
           </div>
         </main>
