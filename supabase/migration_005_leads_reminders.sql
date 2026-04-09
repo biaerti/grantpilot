@@ -64,6 +64,10 @@ create table if not exists reminders (
   created_at timestamptz default now()
 );
 
+-- 5. Przypisanie formularza Tally do projektu
+alter table projects
+  add column if not exists tally_form_id text;  -- np. "zxrYp0"
+
 -- Indeksy
 create index if not exists idx_participants_lead_status on participants(lead_status) where participation_status = 'lead';
 create index if not exists idx_participants_assigned_to on participants(assigned_to);

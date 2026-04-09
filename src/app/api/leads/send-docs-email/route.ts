@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server"
-import { createClient } from "@/lib/supabase/server"
+import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { Resend } from "resend"
+
+function getAdminClient() {
+  return createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  )
+}
 
 export async function POST(request: Request) {
   const { leadId, projectId } = await request.json()
@@ -8,7 +15,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Brak leadId lub projectId" }, { status: 400 })
   }
 
-  const supabase = await createClient()
+  const supabase = getAdminClient()
 
   // Pobierz dane leada
   const { data: lead, error: leadError } = await supabase

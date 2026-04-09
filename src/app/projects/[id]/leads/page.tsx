@@ -22,7 +22,7 @@ import { toast } from "sonner"
 import {
   Plus, Search, Phone, Mail, MapPin, Loader2, X, ChevronRight,
   FileText, CheckSquare, Square, Clock, Bell, UserCheck, Trash2,
-  Pencil, Send, ArrowRight, MessageSquare,
+  Pencil, Send, ArrowRight, MessageSquare, RefreshCw, Link2,
 } from "lucide-react"
 import Link from "next/link"
 import type { Project, LeadStatus, Reminder } from "@/lib/types"
@@ -151,6 +151,13 @@ export default function LeadsPage() {
   const [sendDocsLead, setSendDocsLead] = useState<LeadRow | null>(null)
   const [sendingDocs, setSendingDocs] = useState(false)
 
+  // Tally sync
+  const [tallyForms, setTallyForms] = useState<{ id: string; name: string; numberOfSubmissions: number }[]>([])
+  const [tallyFormId, setTallyFormId] = useState<string>("")
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState<{ imported: number; skipped: number } | null>(null)
+  const [tallyPanelOpen, setTallyPanelOpen] = useState(false)
+
   // Unikalni "assigned_to" z leadów (do filtra)
   const assignees = Array.from(new Set(leads.map(l => l.assigned_to).filter(Boolean))) as string[]
 
@@ -200,6 +207,16 @@ export default function LeadsPage() {
   }, [projectId])
 
   useEffect(() => { fetchLeads() }, [fetchLeads])
+
+  // Pobierz listę formularzy Tally + zapisany form_id projektu
+  useEffect(() => {
+    fetch("/api/leads/tally-sync")
+      .then(r => r.json())
+      .then(data => setTallyForms(data.items ?? []))
+      .catch(() => {})
+    supabase.from("projects").select("tally_form_id").eq("id", projectId).single()
+      .then(({ data }) => { if (data?.tally_form_id) setTallyFormId(data.tally_form_id) })
+  }, [projectId])
 
   // ── Filtry ──
   const filtered = leads.filter(l => {
@@ -362,6 +379,36 @@ export default function LeadsPage() {
     }
   }
 
+  // ── Tally sync ──
+  async function handleTallySync() {
+    if (!tallyFormId) { toast.error("Wybierz formularz Tally"); return }
+    setSyncing(true)
+    setSyncResult(null)
+    try {
+      // Zapisz form_id do projektu
+      await supabase.from("projects").update({ tally_form_id: tallyFormId }).eq("id", projectId)
+      // Sync
+      const res = await fetch("/api/leads/tally-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: projectId, form_id: tallyFormId }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? "Błąd sync")
+      setSyncResult(json)
+      if (json.imported > 0) {
+        toast.success(`Zaimportowano ${json.imported} nowych leadów`)
+        fetchLeads()
+      } else {
+        toast.info("Brak nowych zgłoszeń")
+      }
+    } catch (e) {
+      toast.error(String(e))
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   // ── Wyślij mail z dokumentami ──
   async function handleSendDocs() {
     if (!sendDocsLead?.email) { toast.error("Brak adresu email leada"); return }
@@ -472,6 +519,54 @@ export default function LeadsPage() {
             <Button onClick={() => { setLeadForm(EMPTY_LEAD); setAddDialog(true) }}>
               <Plus className="w-4 h-4 mr-1" /> Dodaj lead
             </Button>
+          </div>
+
+          {/* Panel Tally */}
+          <div className="border rounded-lg bg-white">
+            <button
+              type="button"
+              onClick={() => setTallyPanelOpen(p => !p)}
+              className="w-full flex items-center gap-2 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50 rounded-lg"
+            >
+              <Link2 className="w-4 h-4 text-slate-400" />
+              <span>Synchronizacja z Tally.so</span>
+              {tallyFormId && tallyForms.length > 0 && (
+                <span className="text-xs text-slate-400 ml-1">
+                  · {tallyForms.find(f => f.id === tallyFormId)?.name ?? tallyFormId}
+                </span>
+              )}
+              <span className="ml-auto text-slate-400 text-xs">{tallyPanelOpen ? "▲" : "▼"}</span>
+            </button>
+            {tallyPanelOpen && (
+              <div className="px-4 pb-4 border-t pt-3 flex flex-wrap items-end gap-3">
+                <div className="flex-1 min-w-48">
+                  <Label className="text-xs mb-1 block">Formularz Tally</Label>
+                  <Select value={tallyFormId} onValueChange={v => setTallyFormId(v ?? "")}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Wybierz formularz..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {tallyForms.filter(f => f.numberOfSubmissions > 0).map(f => (
+                        <SelectItem key={f.id} value={f.id}>
+                          {f.name} <span className="text-slate-400">({f.numberOfSubmissions} zgłoszeń)</span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button onClick={handleTallySync} disabled={syncing || !tallyFormId}>
+                  {syncing
+                    ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Synchronizuję…</>
+                    : <><RefreshCw className="w-4 h-4 mr-2" />Synchronizuj teraz</>
+                  }
+                </Button>
+                {syncResult && (
+                  <p className="text-xs text-slate-500">
+                    Ostatni sync: <strong>{syncResult.imported}</strong> nowych, {syncResult.skipped} pominiętych
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Tabela */}

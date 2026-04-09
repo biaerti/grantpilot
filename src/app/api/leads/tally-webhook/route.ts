@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server"
-import { createClient } from "@/lib/supabase/server"
+import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { Resend } from "resend"
+
+function getAdminClient() {
+  return createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  )
+}
 
 // Tally wysyła POST z application/json
 // Struktura: { eventId, eventType, createdAt, data: { responseId, submissionId, respondentId, formId, formName, createdAt, fields: [{key, label, type, value}] } }
@@ -87,7 +94,7 @@ export async function POST(request: Request) {
     projectId = "dda07567-a36f-488b-bab3-0790a89652a3"
   }
 
-  const supabase = await createClient()
+  const supabase = getAdminClient()
 
   // Sprawdź czy już nie ma leada z tym tally_response_id (deduplicacja)
   const responseId = body.data?.responseId ?? body.data?.submissionId
