@@ -81,50 +81,6 @@ const CATEGORY_CONFIG: Record<DocumentCategory, { label: string; color: string; 
   umowa_grupowa:       { label: "Umowa grupowa",       color: "bg-purple-100 text-purple-700", icon: "📃", hasVariables: true },
 }
 
-const DEFAULT_VARIABLES: Record<DocumentCategory, { key: string; label: string }[]> = {
-  deklaracja:          [{ key: "first_name", label: "Imię" }, { key: "last_name", label: "Nazwisko" }],
-  certyfikat:          [{ key: "first_name", label: "Imię" }, { key: "last_name", label: "Nazwisko" }],
-  formularz_online:    [
-    { key: "first_name", label: "Imię" },
-    { key: "last_name", label: "Nazwisko" },
-    { key: "pesel", label: "PESEL" },
-    { key: "email", label: "Email" },
-    { key: "phone", label: "Telefon" },
-  ],
-  formularz_papierowy: [],
-  rodo:                [],
-  pretest:             [],
-  posttest:            [],
-  inne:                [],
-  protokol:            [
-    { key: "contractor_name", label: "Nazwa wykonawcy" },
-    { key: "contract_name", label: "Nazwa umowy" },
-    { key: "contract_amount", label: "Kwota umowy" },
-    { key: "date_from", label: "Data od" },
-    { key: "date_to", label: "Data do" },
-  ],
-  umowa_indywidualna:  [
-    { key: "contractor_name", label: "Nazwa wykonawcy" },
-    { key: "contractor_nip", label: "NIP wykonawcy" },
-    { key: "contract_name", label: "Nazwa umowy" },
-    { key: "contract_number", label: "Numer umowy" },
-    { key: "first_name", label: "Imię uczestnika" },
-    { key: "last_name", label: "Nazwisko uczestnika" },
-    { key: "date_from", label: "Data od" },
-    { key: "date_to", label: "Data do" },
-  ],
-  umowa_grupowa:       [
-    { key: "contractor_name", label: "Nazwa wykonawcy" },
-    { key: "contractor_nip", label: "NIP wykonawcy" },
-    { key: "contract_name", label: "Nazwa umowy" },
-    { key: "contract_number", label: "Numer umowy" },
-    { key: "contract_amount", label: "Kwota umowy" },
-    { key: "group_size", label: "Liczba uczestników" },
-    { key: "date_from", label: "Data od" },
-    { key: "date_to", label: "Data do" },
-  ],
-}
-
 // Pola dostępne jako zmienne w protokołach
 const PROTOCOL_FIELDS: { key: string; label: string; group: string }[] = [
   { key: "contractor_name",   label: "Nazwa wykonawcy",    group: "Wykonawca" },
@@ -141,26 +97,62 @@ const PROTOCOL_FIELDS: { key: string; label: string; group: string }[] = [
   { key: "project_number",    label: "Numer projektu",     group: "Projekt" },
 ]
 
-// Pola dostępne jako zmienne w szablonach umów
-const CONTRACT_FIELDS: { key: string; label: string; group: string }[] = [
-  { key: "contractor_name",    label: "Nazwa wykonawcy",         group: "Wykonawca" },
-  { key: "contractor_nip",     label: "NIP wykonawcy",           group: "Wykonawca" },
-  { key: "contractor_address", label: "Adres wykonawcy",         group: "Wykonawca" },
-  { key: "contract_name",      label: "Nazwa umowy",             group: "Umowa" },
-  { key: "contract_number",    label: "Numer umowy",             group: "Umowa" },
-  { key: "contract_amount",    label: "Kwota umowy",             group: "Umowa" },
-  { key: "contract_scope",     label: "Zakres umowy",            group: "Umowa" },
-  { key: "date_from",          label: "Data od",                 group: "Umowa" },
-  { key: "date_to",            label: "Data do",                 group: "Umowa" },
-  { key: "first_name",         label: "Imię uczestnika",         group: "Uczestnik (indywidualna)" },
-  { key: "last_name",          label: "Nazwisko uczestnika",     group: "Uczestnik (indywidualna)" },
-  { key: "pesel",              label: "PESEL uczestnika",        group: "Uczestnik (indywidualna)" },
-  { key: "address",            label: "Adres uczestnika",        group: "Uczestnik (indywidualna)" },
-  { key: "group_size",         label: "Liczba uczestników",      group: "Umowa grupowa" },
-  { key: "task_name",          label: "Nazwa zadania",           group: "Projekt" },
-  { key: "project_name",       label: "Nazwa projektu",          group: "Projekt" },
-  { key: "project_number",     label: "Numer projektu",          group: "Projekt" },
+// Pola dla umowy indywidualnej (z wykonawcą – bez danych uczestnika, z liczbą godzin)
+const CONTRACT_INDIVIDUAL_FIELDS: { key: string; label: string; group: string }[] = [
+  { key: "contractor_name",    label: "Nazwa wykonawcy",          group: "Wykonawca" },
+  { key: "contractor_nip",     label: "NIP wykonawcy",            group: "Wykonawca" },
+  { key: "contractor_address", label: "Adres wykonawcy",          group: "Wykonawca" },
+  { key: "contract_name",      label: "Nazwa umowy",              group: "Umowa" },
+  { key: "contract_number",    label: "Numer umowy",              group: "Umowa" },
+  { key: "contract_scope",     label: "Zakres umowy",             group: "Umowa" },
+  { key: "hours_total",        label: "Liczba godzin",            group: "Umowa" },
+  { key: "date_from",          label: "Data od",                  group: "Umowa" },
+  { key: "date_to",            label: "Data do",                  group: "Umowa" },
+  { key: "task_name",          label: "Nazwa zadania",            group: "Projekt" },
+  { key: "budget_line_name",   label: "Podzadanie budżetowe",     group: "Projekt" },
+  { key: "project_name",       label: "Nazwa projektu",           group: "Projekt" },
+  { key: "project_number",     label: "Numer projektu",           group: "Projekt" },
 ]
+
+// Pola dla umowy grupowej (szkolenie/kurs dla grupy – z liczbą osób, bez rozbicia na uczestników)
+const CONTRACT_GROUP_FIELDS: { key: string; label: string; group: string }[] = [
+  { key: "contractor_name",    label: "Nazwa wykonawcy",          group: "Wykonawca" },
+  { key: "contractor_nip",     label: "NIP wykonawcy",            group: "Wykonawca" },
+  { key: "contractor_address", label: "Adres wykonawcy",          group: "Wykonawca" },
+  { key: "contract_name",      label: "Nazwa umowy",              group: "Umowa" },
+  { key: "contract_number",    label: "Numer umowy",              group: "Umowa" },
+  { key: "contract_scope",     label: "Zakres umowy",             group: "Umowa" },
+  { key: "group_size",         label: "Liczba uczestników",       group: "Umowa" },
+  { key: "date_from",          label: "Data szkolenia (od)",      group: "Umowa" },
+  { key: "date_to",            label: "Data szkolenia (do)",      group: "Umowa" },
+  { key: "task_name",          label: "Nazwa zadania",            group: "Projekt" },
+  { key: "budget_line_name",   label: "Podzadanie budżetowe",     group: "Projekt" },
+  { key: "project_name",       label: "Nazwa projektu",           group: "Projekt" },
+  { key: "project_number",     label: "Numer projektu",           group: "Projekt" },
+]
+
+
+const DEFAULT_VARIABLES: Record<DocumentCategory, { key: string; label: string }[]> = {
+  deklaracja:          [{ key: "first_name", label: "Imię" }, { key: "last_name", label: "Nazwisko" }],
+  certyfikat:          [{ key: "first_name", label: "Imię" }, { key: "last_name", label: "Nazwisko" }],
+  formularz_online:    [
+    { key: "first_name", label: "Imię" },
+    { key: "last_name", label: "Nazwisko" },
+    { key: "pesel", label: "PESEL" },
+    { key: "email", label: "Email" },
+    { key: "phone", label: "Telefon" },
+  ],
+  formularz_papierowy: [],
+  rodo:                [],
+  pretest:             [],
+  posttest:            [],
+  inne:                [],
+  protokol:            PROTOCOL_FIELDS.map(f => ({ key: f.key, label: f.label })),
+  // Umowa indywidualna – wszystkie pola domyślnie zaznaczone; bez danych osobowych uczestnika
+  umowa_indywidualna:  CONTRACT_INDIVIDUAL_FIELDS.map(f => ({ key: f.key, label: f.label })),
+  // Umowa grupowa – wszystkie pola domyślnie zaznaczone; z liczbą osób zamiast danych uczestnika
+  umowa_grupowa:       CONTRACT_GROUP_FIELDS.map(f => ({ key: f.key, label: f.label })),
+}
 
 const CATEGORY_ORDER: DocumentCategory[] = [
   "deklaracja", "formularz_online", "formularz_papierowy", "rodo", "pretest", "posttest", "certyfikat", "inne",
@@ -950,7 +942,7 @@ export default function TemplatesPage() {
               />
             </div>
 
-            {/* Zmienne */}
+            {/* Zmienne – lista zależy od wybranego typu umowy */}
             <div className="space-y-2">
               <Label className="text-xs font-medium flex items-center gap-1">
                 <Tag className="w-3 h-3" /> Zmienne do generowania
@@ -960,11 +952,12 @@ export default function TemplatesPage() {
               </p>
               <div className="border rounded-lg divide-y max-h-52 overflow-y-auto">
                 {Object.entries(
-                  CONTRACT_FIELDS.reduce((acc, f) => {
-                    if (!acc[f.group]) acc[f.group] = []
-                    acc[f.group].push(f)
-                    return acc
-                  }, {} as Record<string, typeof CONTRACT_FIELDS>)
+                  (contractTmplType === "umowa_indywidualna" ? CONTRACT_INDIVIDUAL_FIELDS : CONTRACT_GROUP_FIELDS)
+                    .reduce((acc, f) => {
+                      if (!acc[f.group]) acc[f.group] = []
+                      acc[f.group].push(f)
+                      return acc
+                    }, {} as Record<string, typeof CONTRACT_INDIVIDUAL_FIELDS>)
                 ).map(([group, fields]) => (
                   <div key={group}>
                     <div className="px-3 py-1.5 bg-slate-50 text-xs font-semibold text-slate-500">{group}</div>

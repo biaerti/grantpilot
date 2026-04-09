@@ -14,11 +14,13 @@ import {
   Plane,
   ChevronRight,
   ChevronDown,
+  Bell,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 
 interface SidebarProps {
   pendingAccountingCount?: number
+  pendingRemindersCount?: number
 }
 
 interface ProjectItem {
@@ -28,15 +30,27 @@ interface ProjectItem {
   status: string
 }
 
-export function Sidebar({ pendingAccountingCount = 0 }: SidebarProps) {
+export function Sidebar({ pendingAccountingCount = 0, pendingRemindersCount }: SidebarProps) {
   const pathname = usePathname()
   const supabase = createClient()
   const [projects, setProjects] = useState<ProjectItem[]>([])
   const [projectsOpen, setProjectsOpen] = useState(true)
+  const [remindersCount, setRemindersCount] = useState(pendingRemindersCount ?? 0)
 
   useEffect(() => {
     supabase.from("projects").select("id, short_name, name, status").order("name")
       .then(({ data }) => setProjects(data ?? []))
+    // Pobierz liczbę aktywnych przypomnień (zaległe + dzisiejsze)
+    if (pendingRemindersCount === undefined) {
+      const today = new Date()
+      today.setHours(23, 59, 59, 999)
+      supabase
+        .from("reminders")
+        .select("id", { count: "exact", head: true })
+        .eq("done", false)
+        .lte("remind_at", today.toISOString())
+        .then(({ count }) => setRemindersCount(count ?? 0))
+    }
   }, [])
 
   const isProjectsActive = pathname.startsWith("/projects")
@@ -135,6 +149,23 @@ export function Sidebar({ pendingAccountingCount = 0 }: SidebarProps) {
             </Link>
           )
         })()}
+
+        {/* Przypomnienia */}
+        <Link
+          href="/reminders"
+          className={cn(
+            "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
+            pathname.startsWith("/reminders") ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white hover:bg-slate-800"
+          )}
+        >
+          <Bell className="w-5 h-5 flex-shrink-0" />
+          <span className="flex-1">Przypomnienia</span>
+          {remindersCount > 0 && (
+            <Badge variant="destructive" className="h-5 min-w-5 text-xs px-1.5">
+              {remindersCount}
+            </Badge>
+          )}
+        </Link>
 
         {/* Rozliczenia */}
         <Link

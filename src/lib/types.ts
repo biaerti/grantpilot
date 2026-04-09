@@ -373,3 +373,91 @@ export interface BudgetSummary {
   remaining: number
   percent_spent: number
 }
+
+// ─── Rekrutacja / Leady ───────────────────────────────────────────────────────
+
+export type LeadStatus = 'nowy' | 'w_kontakcie' | 'zakwalifikowany' | 'odrzucony' | 'uczestnik'
+export type LeadSource = 'olx' | 'tally' | 'telefon' | 'polecenie' | 'inne'
+
+/** Lead = uczestnik z participation_status='lead' + dodatkowe pola rekrutacyjne */
+export interface Lead {
+  id: string
+  project_id: string
+  first_name: string
+  last_name: string
+  phone?: string
+  email?: string
+  city?: string
+  lead_status: LeadStatus
+  lead_source: LeadSource
+  tally_response_id?: string
+  form_answers?: Record<string, unknown>
+  assigned_to?: string
+  callback_at?: string
+  callback_note?: string
+  instant_email_sent_at?: string
+  docs_email_sent_at?: string
+  qualification_notes?: string
+  // z participants
+  disability: boolean
+  employment_status?: string
+  employment_detail?: string
+  foreign_origin: boolean
+  third_country_citizen: boolean
+  degurba?: number
+  notes?: string
+  created_at: string
+  updated_at: string
+  // joined
+  lead_documents?: LeadDocument[]
+  reminders?: Reminder[]
+}
+
+export type RecruitmentDocWhoFills = 'uczestnik' | 'my' | 'zus' | 'up' | 'ops' | 'mops'
+export type RecruitmentDocAppliesTo = 'wszyscy' | 'bezrobotni' | 'bierni' | 'niepelnosprawni' | 'ukr' | 'ops'
+
+export interface RecruitmentDocumentType {
+  id: string
+  project_id: string
+  name: string
+  description?: string
+  file_url?: string
+  file_name?: string
+  required: boolean
+  who_fills: RecruitmentDocWhoFills
+  applies_to: RecruitmentDocAppliesTo
+  sort_order: number
+  created_at: string
+}
+
+export interface LeadDocument {
+  id: string
+  participant_id: string
+  project_id: string
+  doc_type_id?: string
+  doc_type?: RecruitmentDocumentType
+  name: string
+  delivered: boolean
+  delivered_at?: string
+  file_url?: string
+  file_name?: string
+  notes?: string
+  created_at: string
+}
+
+export interface Reminder {
+  id: string
+  project_id: string
+  participant_id: string
+  assigned_to: string
+  remind_at: string
+  all_day: boolean
+  note?: string
+  done: boolean
+  done_at?: string
+  created_by?: string
+  created_at: string
+  // joined
+  participant?: Pick<Lead, 'id' | 'first_name' | 'last_name' | 'phone'>
+  project?: Pick<Project, 'id' | 'name' | 'short_name'>
+}

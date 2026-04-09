@@ -11,7 +11,7 @@ Repo: https://github.com/biaerti/grantpilot (branch: main)
 
 ---
 
-## Zrealizowane funkcje (stan na 08.04.2026)
+## Zrealizowane funkcje (stan na 09.04.2026)
 
 ### Moduły / strony
 | Ścieżka | Co robi |
@@ -28,8 +28,10 @@ Repo: https://github.com/biaerti/grantpilot (branch: main)
 | `/projects/[id]/settlement` | Filtr miesiąc + umowa, summary, "Rozlicz wszystkie", "Generuj protokół odbioru" (.txt) |
 | `/projects/[id]/documents` | Dokumenty uczestników: upload PDF/DOC/JPG, typy dokumentów, filtrowanie, grupowanie po uczestnikach, checklistka wymaganych |
 | `/projects/[id]/wnp` | Okresy rozliczeniowe (wnioski o płatność) |
+| `/projects/[id]/leads` | Leady rekrutacyjne: tabela kandydatów, statusy (nowy→uczestnik), dokumenty rekrutacyjne (checklistka), obdzwonka/przypomnienia, wysyłka maila z dokumentami |
+| `/reminders` | Globalne przypomnienia obdzwonki: lista po dniach, zaległe/dzisiaj, filtr inicjały, zmiana przypisania |
 | `/accounting` | Agregator zleceń księgowych wszystkich projektów (widok Kamili) |
-| `/calendar` | Kalendarz zdarzeń |
+| `/calendar` | Kalendarz zdarzeń + przypomnienia obdzwonki (żółte, toggle w legendzie) |
 
 ### Techniczne patterny — WAŻNE
 - `React.Fragment key={id}` dla multiple `<tr>` w `.map()`
@@ -51,6 +53,7 @@ Repo: https://github.com/biaerti/grantpilot (branch: main)
 | `supabase/migration_002_event_hours.sql` | `events`: planned_hours, executor_name |
 | `supabase/migration_003_contractors_contracts.sql` | Tabele `contractors` + `contracts`; FK do events i budget_lines |
 | `supabase/migration_004_participant_documents.sql` | Tabele `document_types` + `participant_documents` |
+| `supabase/migration_005_leads_reminders.sql` | Kolumny rekrutacyjne w `participants` + tabele `recruitment_document_types`, `lead_documents`, `reminders` |
 
 ### Kluczowe tabele
 - `projects` – kolumna: `project_number` (nie `number`)

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { Sidebar } from "@/components/layout/sidebar"
@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/dialog"
 import { EventStatusBadge } from "@/components/events/event-status-badge"
 import { formatCurrency, eventTypeLabel, formatDate, getProjectHexColor } from "@/lib/utils"
-import { ChevronLeft, ChevronRight, Users, Wallet, MapPin } from "lucide-react"
+import { ChevronLeft, ChevronRight, Users, Wallet, MapPin, Bell, Phone } from "lucide-react"
 import {
   format,
   startOfMonth,
@@ -32,12 +32,25 @@ import {
 } from "date-fns"
 import { pl } from "date-fns/locale"
 import type { Event, Project } from "@/lib/types"
+import Link from "next/link"
 
 interface EventWithProject extends Event {
   project: Project
 }
 
-export default function CalendarPage() {
+interface ReminderWithJoin {
+  id: string
+  project_id: string
+  remind_at: string
+  all_day: boolean
+  note?: string | null
+  assigned_to: string
+  done: boolean
+  participant: { id: string; first_name: string; last_name: string; phone?: string | null } | null
+  project: { id: string; short_name?: string | null; name: string } | null
+}
+
+function CalendarPageInner() {
   const supabase = createClient()
   const searchParams = useSearchParams()
 
@@ -46,8 +59,9 @@ export default function CalendarPage() {
   const [projects, setProjects] = useState<Project[]>([])
   const [selectedEvent, setSelectedEvent] = useState<EventWithProject | null>(null)
   const [loading, setLoading] = useState(true)
-  // Init hiddenProjects: hide all except the one from URL (if provided)
   const [hiddenProjects, setHiddenProjects] = useState<Set<string>>(new Set())
+  const [reminders, setReminders] = useState<ReminderWithJoin[]>([])
+  const [showReminders, setShowReminders] = useState(true)
 
   useEffect(() => {
     fetchData()
@@ -63,16 +77,22 @@ export default function CalendarPage() {
   }, [projects, searchParams])
 
   async function fetchData() {
-    const [eventsRes, projectsRes] = await Promise.all([
+    const [eventsRes, projectsRes, remindersRes] = await Promise.all([
       supabase
         .from("events")
         .select("*, project:projects(*)")
         .not("planned_date", "is", null)
         .order("planned_date", { ascending: true }),
       supabase.from("projects").select("*").order("name"),
+      supabase
+        .from("reminders")
+        .select("*, participant:participants(id,first_name,last_name,phone), project:projects(id,name,short_name)")
+        .eq("done", false)
+        .order("remind_at", { ascending: true }),
     ])
     setEvents(eventsRes.data ?? [])
     setProjects(projectsRes.data ?? [])
+    setReminders((remindersRes.data ?? []) as unknown as ReminderWithJoin[])
     setLoading(false)
   }
 
@@ -94,6 +114,11 @@ export default function CalendarPage() {
       if (hiddenProjects.has(e.project_id)) return false
       return isSameDay(parseISO(e.planned_date), date)
     })
+  }
+
+  const getRemindersForDay = (date: Date) => {
+    if (!showReminders) return []
+    return reminders.filter(r => isSameDay(parseISO(r.remind_at), date))
   }
 
   const projectColorMap: Record<string, string> = {}
@@ -168,6 +193,7 @@ export default function CalendarPage() {
                   <div className="grid grid-cols-7">
                     {days.map((d, i) => {
                       const dayEvents = getEventsForDay(d)
+                      const dayReminders = getRemindersForDay(d)
                       const isToday = isSameDay(d, new Date())
                       const isCurrentMonth = isSameMonth(d, currentDate)
                       const isLastRow = i >= days.length - 7
@@ -211,6 +237,26 @@ export default function CalendarPage() {
                                 +{dayEvents.length - 3} więcej
                               </div>
                             )}
+                            {/* Przypomnienia obdzwonki */}
+                            {dayReminders.map(rem => (
+                              <Link
+                                key={rem.id}
+                                href={`/projects/${rem.project_id}/leads`}
+                                className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded truncate bg-amber-50 text-amber-700 border-l-2 border-amber-400 hover:bg-amber-100 transition-colors"
+                                title={rem.note ?? `Obdzwonka: ${rem.participant?.first_name} ${rem.participant?.last_name}`}
+                              >
+                                <Bell className="w-2.5 h-2.5 flex-shrink-0" />
+                                <span className="truncate">
+                                  {!rem.all_day && (
+                                    <span className="mr-1 opacity-70">
+                                      {new Date(rem.remind_at).toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" })}
+                                    </span>
+                                  )}
+                                  {rem.participant?.first_name} {rem.participant?.last_name?.[0]}.
+                                  {rem.assigned_to && <span className="ml-1 opacity-60">{rem.assigned_to}</span>}
+                                </span>
+                              </Link>
+                            ))}
                           </div>
                         </div>
                       )
@@ -249,6 +295,21 @@ export default function CalendarPage() {
                       </button>
                     )
                   })}
+                  {/* Przypomnienia toggle */}
+                  {reminders.length > 0 && (
+                    <button
+                      onClick={() => setShowReminders(p => !p)}
+                      className={`w-full flex items-center gap-2 text-left p-2 rounded-lg transition-colors ${
+                        !showReminders ? "opacity-40" : "hover:bg-slate-100"
+                      }`}
+                    >
+                      <div className="w-3 h-3 rounded-sm flex-shrink-0 bg-amber-400" />
+                      <span className="text-xs text-slate-700 flex-1 truncate flex items-center gap-1">
+                        <Bell className="w-3 h-3" /> Przypomnienia
+                      </span>
+                      <span className="text-xs text-slate-400">{reminders.length}</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -342,5 +403,13 @@ export default function CalendarPage() {
         </DialogContent>
       </Dialog>
     </div>
+  )
+}
+
+export default function CalendarPage() {
+  return (
+    <Suspense>
+      <CalendarPageInner />
+    </Suspense>
   )
 }

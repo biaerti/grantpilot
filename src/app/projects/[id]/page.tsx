@@ -34,6 +34,7 @@ import {
   ListTodo,
   FolderOpen,
   ScrollText,
+  UserPlus,
 } from "lucide-react"
 
 interface PageProps {
@@ -236,6 +237,7 @@ export default async function ProjectDetailPage({ params }: PageProps) {
           {/* Quick navigation */}
           <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
             {[
+              { label: "Leady", href: `/projects/${id}/leads`, icon: UserPlus, desc: "Rekrutacja kandydatów" },
               { label: "Zadania", href: `/projects/${id}/tasks`, icon: ListTodo, desc: "Budżet i podzadania" },
               { label: "Zdarzenia", href: `/projects/${id}/events`, icon: Calendar, desc: "Lista zdarzeń" },
               { label: "Uczestnicy", href: `/projects/${id}/participants`, icon: UserCheck, desc: "Lista i wsparcie" },

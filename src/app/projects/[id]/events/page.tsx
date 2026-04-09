@@ -37,7 +37,7 @@ const TYPE_ICONS: Record<string, string> = {
   other: "📌",
 }
 
-interface EventWithTask extends Event {
+interface EventWithTask extends Omit<Event, "task"> {
   task?: { id: string; number: number; name: string } | null
   event_participants?: { participant?: { id: string; first_name: string; last_name: string } | null }[]
 }
