@@ -20,7 +20,16 @@ import {
   Trash2,
   Loader2,
   ArrowLeft,
+  FileText,
+  Download,
+  X,
 } from "lucide-react"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import Link from "next/link"
 import type { Project } from "@/lib/types"
 
@@ -70,6 +79,9 @@ export default function TasksPage() {
   const [expenses, setExpenses] = useState<Record<string, number>>({})
   const [expandedContracts, setExpandedContracts] = useState<Set<string>>(new Set())
   const [contracts, setContracts] = useState<{ id: string; name: string; status: string; amount?: number | null; date_from?: string | null; date_to?: string | null; task_id?: string | null; budget_line_id?: string | null; contractor?: { name: string } | null }[]>([])
+  const [docsDialog, setDocsDialog] = useState<{ taskId: string; lineId?: string; lineName: string } | null>(null)
+  const [taskDocs, setTaskDocs] = useState<{ id: string; name: string; file_url?: string | null; file_name?: string | null; mime_type?: string | null; uploaded_at: string; participant?: { first_name: string; last_name: string } | null; document_type?: { name: string } | null }[]>([])
+  const [taskDocsLoading, setTaskDocsLoading] = useState(false)
 
   useEffect(() => {
     fetchData()
@@ -130,6 +142,37 @@ export default function TasksPage() {
     setTasks(tasksData)
     setExpenses(exp)
     setLoading(false)
+  }
+
+  function isContractActive(c: { status: string; date_from?: string | null; date_to?: string | null }) {
+    if (c.status !== "active") return false
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    if (c.date_from && new Date(c.date_from) > today) return false
+    if (c.date_to && new Date(c.date_to) < today) return false
+    return true
+  }
+
+  function contractDisplayStatus(c: { status: string; date_from?: string | null; date_to?: string | null }) {
+    if (c.status === "active") {
+      if (!isContractActive(c)) return "expired"
+      return "active"
+    }
+    if (c.status === "completed") return "completed"
+    return "draft"
+  }
+
+  async function openDocsDialog(taskId: string, lineId?: string, lineName?: string) {
+    setDocsDialog({ taskId, lineId, lineName: lineName ?? "zadanie" })
+    setTaskDocsLoading(true)
+    let query = supabase
+      .from("participant_documents")
+      .select("id, name, file_url, file_name, mime_type, uploaded_at, participant:participants(first_name, last_name), document_type:document_types!document_type_id(name)")
+      .eq("project_id", projectId)
+      .order("uploaded_at", { ascending: false })
+    const { data } = await query
+    setTaskDocs((data ?? []) as unknown as typeof taskDocs)
+    setTaskDocsLoading(false)
   }
 
   const toggleTask = (taskId: string) => {
@@ -366,12 +409,19 @@ export default function TasksPage() {
                       <div className="mt-4">
                         <div className="flex items-center justify-between mb-2">
                           <h4 className="text-sm font-semibold text-slate-700">Podzadania budżetowe</h4>
-                          <Link href={`/projects/${projectId}/events/new?task_id=${task.id}`}>
-                            <Button variant="outline" size="sm" className="h-7 text-xs gap-1">
-                              <Plus className="w-3 h-3" />
-                              Dodaj zdarzenie
+                          <div className="flex gap-2">
+                            <Button variant="outline" size="sm" className="h-7 text-xs gap-1"
+                              onClick={() => openDocsDialog(task.id, undefined, task.name)}>
+                              <FileText className="w-3 h-3" />
+                              Dokumenty
                             </Button>
-                          </Link>
+                            <Link href={`/projects/${projectId}/events/new?task_id=${task.id}`}>
+                              <Button variant="outline" size="sm" className="h-7 text-xs gap-1">
+                                <Plus className="w-3 h-3" />
+                                Dodaj zdarzenie
+                              </Button>
+                            </Link>
+                          </div>
                         </div>
                         {task.budget_lines?.length > 0 ? (
                           <table className="w-full text-sm">
@@ -394,7 +444,7 @@ export default function TasksPage() {
                                 const lineContracts = contracts.filter(c =>
                                   c.budget_line_id === line.id || (!c.budget_line_id && c.task_id === task.id)
                                 )
-                                const hasActive = lineContracts.some(c => c.status === "active")
+                                const hasActive = lineContracts.some(c => isContractActive(c))
                                 const contractKey = `${line.id}`
                                 const contractsExpanded = expandedContracts.has(contractKey)
                                 return (
@@ -470,9 +520,14 @@ export default function TasksPage() {
                                   {contractsExpanded && lineContracts.map(c => (
                                     <tr key={c.id} className="bg-slate-50 border-b border-slate-100">
                                       <td colSpan={3} className="py-1.5 pl-8 text-xs text-slate-600">
-                                        <span className={`mr-2 px-1.5 py-0.5 rounded text-xs ${c.status === "active" ? "bg-green-100 text-green-700" : c.status === "completed" ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-500"}`}>
-                                          {c.status === "active" ? "Aktywna" : c.status === "completed" ? "Zakończona" : "Szkic"}
-                                        </span>
+                                        {(() => {
+                                          const ds = contractDisplayStatus(c)
+                                          return (
+                                            <span className={`mr-2 px-1.5 py-0.5 rounded text-xs ${ds === "active" ? "bg-green-100 text-green-700" : ds === "expired" ? "bg-slate-100 text-slate-500" : ds === "completed" ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-400"}`}>
+                                              {ds === "active" ? "Aktywna" : ds === "expired" ? "Nieaktualna" : ds === "completed" ? "Zakończona" : "Szkic"}
+                                            </span>
+                                          )
+                                        })()}
                                         <strong>{c.name}</strong>
                                         {c.contractor && <span className="text-slate-400 ml-1">· {c.contractor.name}</span>}
                                         {c.date_from && <span className="text-slate-400 ml-1">· {c.date_from.slice(0,10)}{c.date_to ? ` – ${c.date_to.slice(0,10)}` : ""}</span>}
@@ -500,6 +555,68 @@ export default function TasksPage() {
           )}
         </main>
       </div>
+      {/* Dokumenty zadania */}
+      <Dialog open={!!docsDialog} onOpenChange={open => { if (!open) setDocsDialog(null) }}>
+        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="w-4 h-4" />
+              Dokumenty – {docsDialog?.lineName}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto space-y-1 py-2">
+            {taskDocsLoading ? (
+              <div className="flex items-center justify-center py-10">
+                <Loader2 className="w-6 h-6 animate-spin text-slate-300" />
+              </div>
+            ) : taskDocs.length === 0 ? (
+              <div className="text-center py-10 text-slate-400">
+                <FileText className="w-10 h-10 mx-auto mb-2 text-slate-200" />
+                <p className="text-sm">Brak dokumentów w tym projekcie</p>
+                <a href={`/projects/${projectId}/documents`} target="_blank" rel="noopener noreferrer"
+                  className="text-xs text-blue-600 hover:underline mt-1 inline-block">
+                  Przejdź do zarządzania dokumentami →
+                </a>
+              </div>
+            ) : (
+              <>
+                <p className="text-xs text-slate-400 px-1 pb-1">
+                  Wszystkie dokumenty projektu ({taskDocs.length}).{" "}
+                  <a href={`/projects/${projectId}/documents`} target="_blank" rel="noopener noreferrer"
+                    className="text-blue-600 hover:underline">
+                    Dodaj nowe →
+                  </a>
+                </p>
+                {taskDocs.map(doc => (
+                  <div key={doc.id} className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-50 border border-transparent hover:border-slate-100">
+                    <span className="text-lg flex-shrink-0">
+                      {doc.mime_type?.includes("pdf") ? "📕" : doc.mime_type?.includes("word") || doc.mime_type?.includes("docx") ? "📘" : doc.mime_type?.includes("image") ? "🖼️" : "📄"}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-slate-800 truncate">{doc.name}</p>
+                      <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
+                        {doc.participant && (
+                          <span className="text-slate-600">{doc.participant.last_name} {doc.participant.first_name}</span>
+                        )}
+                        {doc.document_type && (
+                          <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">{doc.document_type.name}</span>
+                        )}
+                        <span>{new Date(doc.uploaded_at).toLocaleDateString("pl-PL")}</span>
+                      </div>
+                    </div>
+                    {doc.file_url && (
+                      <a href={doc.file_url} target="_blank" rel="noopener noreferrer"
+                        className="flex-shrink-0 text-slate-400 hover:text-blue-600 p-1">
+                        <Download className="w-3.5 h-3.5" />
+                      </a>
+                    )}
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -1,5 +1,5 @@
 export type ProjectStatus = 'active' | 'completed' | 'suspended'
-export type EventStatus = 'draft' | 'planned' | 'accepted' | 'completed' | 'settled'
+export type EventStatus = 'draft' | 'planned' | 'accepted' | 'in_progress' | 'completed' | 'settled'
 export type EventType = 'training' | 'workshop' | 'conference' | 'consulting' | 'production' | 'podcast' | 'other'
 export type ExpenseStatus = 'planned' | 'pending_invoice' | 'invoiced' | 'paid' | 'settled'
 export type AccountingRequestStatus = 'pending' | 'invoiced' | 'paid'
@@ -107,6 +107,7 @@ export interface Participant {
   completed_path?: boolean
   sl_added_by?: string
   sl_added_at?: string
+  participation_status?: 'lead' | 'active' | 'completed'
   source: 'manual' | 'import'
   notes?: string
   created_at: string
@@ -253,6 +254,24 @@ export interface UserProfile {
   created_at: string
 }
 
+export type DocumentCategory =
+  | "deklaracja"
+  | "formularz_online"
+  | "formularz_papierowy"
+  | "rodo"
+  | "pretest"
+  | "posttest"
+  | "certyfikat"
+  | "inne"
+  | "protokol"
+  | "umowa_indywidualna"
+  | "umowa_grupowa"
+
+export interface DocumentVariable {
+  key: string   // np. "first_name"
+  label: string // np. "Imię"
+}
+
 export interface DocumentType {
   id: string
   project_id: string
@@ -260,6 +279,10 @@ export interface DocumentType {
   description?: string | null
   required: boolean
   sort_order: number
+  category: DocumentCategory
+  task_id?: string | null
+  budget_line_id?: string | null
+  variables: DocumentVariable[]
   created_at: string
 }
 
@@ -269,6 +292,10 @@ export interface ParticipantDocument {
   project_id: string
   document_type_id?: string | null
   document_type?: DocumentType | null
+  task_id?: string | null
+  budget_line_id?: string | null
+  template_id?: string | null
+  generated?: boolean
   name: string
   file_url?: string | null
   file_name?: string | null
@@ -276,6 +303,29 @@ export interface ParticipantDocument {
   mime_type?: string | null
   notes?: string | null
   uploaded_at: string
+  created_at: string
+}
+
+export type IndicatorType = 'product' | 'result' | 'soft'
+export type IndicatorAutoField =
+  | 'participants_total' | 'participants_female' | 'participants_male'
+  | 'participants_age_18_29' | 'participants_age_55' | 'participants_rural'
+  | 'participants_disabled' | 'participants_homeless' | 'participants_minority'
+  | 'participants_unemployed' | 'participants_inactive' | 'participants_long_term_unemployed'
+  | 'events_count' | null
+
+export interface ProjectIndicator {
+  id: string
+  project_id: string
+  code?: string | null
+  name: string
+  type: IndicatorType
+  target_value: number
+  unit: string
+  auto_field?: IndicatorAutoField
+  current_value: number
+  notes?: string | null
+  sort_order: number
   created_at: string
 }
 
@@ -288,6 +338,29 @@ export interface ParticipantStats {
   age_55_plus: number
   rural: number
   disabled: number
+}
+
+export interface Protocol {
+  id: string
+  project_id: string
+  contract_id?: string | null
+  contractor_id?: string | null
+  task_id?: string | null
+  template_id?: string | null
+  month: string                    // 'YYYY-MM'
+  total_hours: number
+  total_participants: number
+  total_amount: number
+  event_count: number
+  content_summary?: string | null
+  event_ids: string[]
+  document_url?: string | null
+  status: 'draft' | 'generated' | 'sent'
+  created_at: string
+  // joined
+  contract?: { id: string; name: string; contract_number?: string | null } | null
+  contractor?: { id: string; name: string } | null
+  task?: { id: string; number: number; name: string } | null
 }
 
 export interface BudgetSummary {

@@ -1,7 +1,7 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { useParams } from "next/navigation"
+import { useState, useEffect, useMemo } from "react"
+import { useParams, useSearchParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { Sidebar } from "@/components/layout/sidebar"
 import { Header } from "@/components/layout/header"
@@ -19,10 +19,12 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog"
 import { EventStatusBadge } from "@/components/events/event-status-badge"
-import { formatCurrency, formatDateShort, eventTypeLabel } from "@/lib/utils"
+import { formatCurrency, formatDateShort, eventTypeLabel, computeEventDisplayStatus } from "@/lib/utils"
 import { toast } from "sonner"
-import { Plus, Users, Calendar, Wallet, CheckCircle, Loader2, Pencil, X, Search } from "lucide-react"
+import { Plus, Users, Calendar, Wallet, CheckCircle, Loader2, Pencil, X, Search, CalendarDays, List, ChevronLeft, ChevronRight } from "lucide-react"
 import Link from "next/link"
+import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, addMonths, subMonths, isSameDay, isSameMonth, parseISO } from "date-fns"
+import { pl } from "date-fns/locale"
 import type { Event, EventStatus, Project } from "@/lib/types"
 
 const TYPE_ICONS: Record<string, string> = {
@@ -48,6 +50,7 @@ interface ParticipantMin {
 
 export default function EventsPage() {
   const params = useParams<{ id: string }>()
+  const searchParams = useSearchParams()
   const projectId = params.id
   const supabase = createClient()
 
@@ -55,10 +58,12 @@ export default function EventsPage() {
   const [events, setEvents] = useState<EventWithTask[]>([])
   const [participants, setParticipants] = useState<ParticipantMin[]>([])
   const [loading, setLoading] = useState(true)
+  const [viewMode, setViewMode] = useState<"list" | "calendar">("list")
+  const [calDate, setCalDate] = useState(new Date())
 
-  // Filters
+  // Filters - init from URL params
   const [filterStatus, setFilterStatus] = useState<string>("all")
-  const [filterParticipant, setFilterParticipant] = useState<string>("all")
+  const [filterParticipant, setFilterParticipant] = useState<string>(() => searchParams?.get("participant_id") ?? "all")
   const [filterLocation, setFilterLocation] = useState<string>("all")
   const [searchText, setSearchText] = useState("")
 
@@ -97,7 +102,7 @@ export default function EventsPage() {
 
   // Apply all filters
   const filteredEvents = events.filter(ev => {
-    if (filterStatus !== "all" && ev.status !== filterStatus) return false
+    if (filterStatus !== "all" && getDisplayStatus(ev) !== filterStatus) return false
     if (filterLocation !== "all" && ev.location !== filterLocation) return false
     if (filterParticipant !== "all") {
       const pIds = ev.event_participants?.map(ep => ep.participant?.id).filter(Boolean) ?? []
@@ -110,12 +115,41 @@ export default function EventsPage() {
     return true
   })
 
+  // Oblicz display-status (in_progress gdy zdarzenie trwa dziś)
+  const getDisplayStatus = (e: EventWithTask) =>
+    computeEventDisplayStatus(e.status, e.planned_date, e.planned_end_date)
+
   const statusCounts = events.reduce((acc, e) => {
-    acc[e.status] = (acc[e.status] ?? 0) + 1
+    const ds = getDisplayStatus(e)
+    acc[ds] = (acc[ds] ?? 0) + 1
     return acc
   }, {} as Record<string, number>)
 
   const hasFilters = filterParticipant !== "all" || filterLocation !== "all" || searchText.trim() !== ""
+
+  // Calendar helpers
+  const calDays = useMemo(() => {
+    const monthStart = startOfMonth(calDate)
+    const monthEnd = endOfMonth(calDate)
+    const start = startOfWeek(monthStart, { weekStartsOn: 1 })
+    const end = endOfWeek(monthEnd, { weekStartsOn: 1 })
+    const days: Date[] = []
+    let d = start
+    while (d <= end) { days.push(d); d = addDays(d, 1) }
+    return days
+  }, [calDate])
+
+  const getEventsForDay = (date: Date) =>
+    filteredEvents.filter(e => e.planned_date && isSameDay(parseISO(e.planned_date), date))
+
+  const STATUS_COLOR: Record<string, string> = {
+    draft: "bg-slate-300",
+    planned: "bg-blue-400",
+    accepted: "bg-blue-400",
+    in_progress: "bg-amber-400",
+    completed: "bg-green-500",
+    settled: "bg-slate-400",
+  }
 
   const handleStatusChange = async (eventId: string, newStatus: EventStatus) => {
     const { error } = await supabase.from("events").update({ status: newStatus, updated_at: new Date().toISOString() }).eq("id", eventId)
@@ -181,6 +215,51 @@ export default function EventsPage() {
     if (error) { toast.error("Błąd: " + error.message); return }
     setEvents(prev => prev.filter(e => e.id !== eventId))
     toast.success("Usunięto.")
+  }
+
+  const handleSplit = async (event: EventWithTask) => {
+    const eps = event.event_participants ?? []
+    if (eps.length < 2) return
+    if (!confirm(`Podzielić to zdarzenie na ${eps.length} osobne zdarzenia (po jednym na uczestnika)?`)) return
+    const baseName = event.name.replace(/\s*\(.*?\)\s*$/, "").trim()
+    // Fetch full event data
+    const { data: fullEvent } = await supabase.from("events").select("*").eq("id", event.id).single()
+    if (!fullEvent) { toast.error("Błąd pobierania zdarzenia."); return }
+    for (const ep of eps) {
+      if (!ep.participant) continue
+      const { last_name, first_name } = ep.participant
+      const { data: newEv, error: insErr } = await supabase.from("events").insert({
+        project_id: fullEvent.project_id,
+        task_id: fullEvent.task_id,
+        budget_line_id: fullEvent.budget_line_id,
+        support_form_id: fullEvent.support_form_id,
+        name: `${baseName} (${last_name} ${first_name})`,
+        type: fullEvent.type,
+        status: fullEvent.status,
+        planned_date: fullEvent.planned_date,
+        planned_end_date: fullEvent.planned_end_date,
+        start_time: fullEvent.start_time,
+        end_time: fullEvent.end_time,
+        location: fullEvent.location,
+        planned_participants_count: 1,
+        planned_hours: fullEvent.planned_hours,
+        planned_cost: fullEvent.planned_cost,
+        executor_name: fullEvent.executor_name,
+        contract_id: fullEvent.contract_id,
+        notes: fullEvent.notes,
+      }).select().single()
+      if (insErr) { toast.error("Błąd tworzenia: " + insErr.message); return }
+      await supabase.from("event_participants").insert({
+        event_id: newEv.id,
+        participant_id: ep.participant.id,
+        status: "planned",
+        send_invitation: false,
+      })
+    }
+    // Delete original
+    await supabase.from("events").delete().eq("id", event.id)
+    toast.success(`Podzielono na ${eps.length} zdarzenia!`)
+    fetchData()
   }
 
   const handleMarkCompleted = async () => {
@@ -256,7 +335,7 @@ export default function EventsPage() {
               {[
                 { value: "all", label: "Wszystkie", count: events.length },
                 { value: "planned", label: "Zaplanowane", count: statusCounts.planned ?? 0 },
-                { value: "accepted", label: "Zatwierdzone", count: statusCounts.accepted ?? 0 },
+                { value: "in_progress", label: "W realizacji", count: statusCounts.in_progress ?? 0 },
                 { value: "completed", label: "Zrealizowane", count: statusCounts.completed ?? 0 },
                 { value: "settled", label: "Rozliczone", count: statusCounts.settled ?? 0 },
               ].map(f => (
@@ -273,12 +352,29 @@ export default function EventsPage() {
                 </button>
               ))}
             </div>
-            <Link href={`/projects/${projectId}/events/new`}>
-              <Button size="sm">
-                <Plus className="w-4 h-4 mr-1" />
-                Nowe zdarzenie
-              </Button>
-            </Link>
+            <div className="flex items-center gap-2">
+              {/* View toggle */}
+              <div className="flex rounded-lg border border-slate-200 overflow-hidden">
+                <button
+                  onClick={() => setViewMode("list")}
+                  className={`px-3 py-1.5 flex items-center gap-1 text-sm transition-colors ${viewMode === "list" ? "bg-slate-800 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}
+                >
+                  <List className="w-3.5 h-3.5" />Lista
+                </button>
+                <button
+                  onClick={() => setViewMode("calendar")}
+                  className={`px-3 py-1.5 flex items-center gap-1 text-sm transition-colors ${viewMode === "calendar" ? "bg-slate-800 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}
+                >
+                  <CalendarDays className="w-3.5 h-3.5" />Kalendarz
+                </button>
+              </div>
+              <Link href={`/projects/${projectId}/events/new`}>
+                <Button size="sm">
+                  <Plus className="w-4 h-4 mr-1" />
+                  Nowe zdarzenie
+                </Button>
+              </Link>
+            </div>
           </div>
 
           {/* Additional filters */}
@@ -345,11 +441,77 @@ export default function EventsPage() {
             )}
           </div>
 
-          {/* Events list */}
+          {/* Events - list or calendar */}
           {loading ? (
             <div className="text-center py-12">
               <Loader2 className="w-8 h-8 animate-spin mx-auto text-slate-400" />
             </div>
+          ) : viewMode === "calendar" ? (
+            <Card>
+              <CardContent className="p-4">
+                {/* Calendar header */}
+                <div className="flex items-center justify-between mb-4">
+                  <button onClick={() => setCalDate(d => subMonths(d, 1))} className="p-1 hover:bg-slate-100 rounded">
+                    <ChevronLeft className="w-5 h-5 text-slate-500" />
+                  </button>
+                  <h2 className="text-base font-semibold text-slate-800 capitalize">
+                    {format(calDate, "LLLL yyyy", { locale: pl })}
+                  </h2>
+                  <button onClick={() => setCalDate(d => addMonths(d, 1))} className="p-1 hover:bg-slate-100 rounded">
+                    <ChevronRight className="w-5 h-5 text-slate-500" />
+                  </button>
+                </div>
+                {/* Day names */}
+                <div className="grid grid-cols-7 mb-1">
+                  {["Pn","Wt","Śr","Cz","Pt","Sb","Nd"].map(d => (
+                    <div key={d} className="text-center text-xs font-semibold text-slate-400 py-1">{d}</div>
+                  ))}
+                </div>
+                {/* Calendar grid */}
+                <div className="grid grid-cols-7 border-l border-t">
+                  {calDays.map((day, i) => {
+                    const dayEvents = getEventsForDay(day)
+                    const isToday = isSameDay(day, new Date())
+                    const isCurrentMonth = isSameMonth(day, calDate)
+                    return (
+                      <div key={i} className={`border-r border-b min-h-20 p-1 ${!isCurrentMonth ? "bg-slate-50" : ""}`}>
+                        <div className={`text-xs font-medium mb-1 w-6 h-6 flex items-center justify-center rounded-full ${
+                          isToday ? "bg-blue-600 text-white" : isCurrentMonth ? "text-slate-700" : "text-slate-300"
+                        }`}>
+                          {format(day, "d")}
+                        </div>
+                        <div className="space-y-0.5">
+                          {dayEvents.slice(0, 3).map(ev => (
+                            <div key={ev.id}
+                              className={`text-xs px-1 py-0.5 rounded truncate cursor-pointer text-white ${STATUS_COLOR[getDisplayStatus(ev)] ?? "bg-slate-400"}`}
+                              title={ev.name}
+                              onClick={() => {
+                                setViewMode("list")
+                                setSearchText(ev.name.slice(0, 10))
+                              }}
+                            >
+                              {ev.start_time ? ev.start_time.slice(0, 5) + " " : ""}{ev.name}
+                            </div>
+                          ))}
+                          {dayEvents.length > 3 && (
+                            <div className="text-xs text-slate-400 pl-1">+{dayEvents.length - 3} więcej</div>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+                {/* Legend */}
+                <div className="flex items-center gap-4 mt-3 pt-3 border-t flex-wrap">
+                  {Object.entries({ planned: "Zaplanowane", in_progress: "W realizacji", completed: "Zrealizowane", settled: "Rozliczone" }).map(([s, label]) => (
+                    <div key={s} className="flex items-center gap-1.5 text-xs text-slate-500">
+                      <div className={`w-3 h-3 rounded ${STATUS_COLOR[s]}`} />
+                      {label}
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
           ) : filteredEvents.length === 0 ? (
             <Card>
               <CardContent className="py-12 text-center text-slate-500">
@@ -406,7 +568,7 @@ export default function EventsPage() {
                       </div>
 
                       <div className="flex items-center gap-2 flex-shrink-0">
-                        <EventStatusBadge status={event.status} />
+                        <EventStatusBadge status={getDisplayStatus(event)} />
 
                         {/* Edit button */}
                         <Button
@@ -419,18 +581,27 @@ export default function EventsPage() {
                           <Pencil className="w-3.5 h-3.5" />
                         </Button>
 
+                        {/* Podziel – dla zdarzeń indywidualnych z >1 uczestnikiem */}
+                        {(event.event_participants?.length ?? 0) > 1 &&
+                          !["training", "workshop", "conference"].includes(event.type) && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="text-orange-600 border-orange-300 hover:bg-orange-50"
+                            onClick={() => handleSplit(event)}
+                            title="Podziel na osobne zdarzenia"
+                          >
+                            Podziel
+                          </Button>
+                        )}
+
                         {/* Status action buttons */}
                         {event.status === "draft" && (
                           <Button variant="outline" size="sm" onClick={() => handleStatusChange(event.id, "planned")}>
                             Zatwierdź plan
                           </Button>
                         )}
-                        {event.status === "planned" && (
-                          <Button variant="outline" size="sm" onClick={() => handleStatusChange(event.id, "accepted")}>
-                            Potwierdź
-                          </Button>
-                        )}
-                        {event.status === "accepted" && (
+                        {(event.status === "planned" || event.status === "accepted" || event.status === "in_progress") && (
                           <Button size="sm" onClick={() => {
                             setCompletingData({
                               actual_participants_count: String(event.planned_participants_count),
@@ -522,7 +693,6 @@ export default function EventsPage() {
                 <SelectContent>
                   <SelectItem value="draft">Szkic</SelectItem>
                   <SelectItem value="planned">Zaplanowane</SelectItem>
-                  <SelectItem value="accepted">Zatwierdzone</SelectItem>
                   <SelectItem value="completed">Zrealizowane</SelectItem>
                   <SelectItem value="settled">Rozliczone</SelectItem>
                 </SelectContent>

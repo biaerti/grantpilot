@@ -113,16 +113,28 @@ export function Sidebar({ pendingAccountingCount = 0 }: SidebarProps) {
         </div>
 
         {/* Kalendarz */}
-        <Link
-          href="/calendar"
-          className={cn(
-            "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
-            pathname.startsWith("/calendar") ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white hover:bg-slate-800"
-          )}
-        >
-          <CalendarDays className="w-5 h-5 flex-shrink-0" />
-          <span className="flex-1">Kalendarz</span>
-        </Link>
+        {(() => {
+          const projectMatch = pathname.match(/\/projects\/([^/]+)/)
+          const currentProjectId = projectMatch ? projectMatch[1] : null
+          const calHref = currentProjectId ? `/calendar?project_id=${currentProjectId}` : "/calendar"
+          return (
+            <Link
+              href={calHref}
+              className={cn(
+                "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
+                pathname.startsWith("/calendar") ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white hover:bg-slate-800"
+              )}
+            >
+              <CalendarDays className="w-5 h-5 flex-shrink-0" />
+              <span className="flex-1">Kalendarz</span>
+              {currentProjectId && !pathname.startsWith("/calendar") && (
+                <span className="text-xs text-slate-500 truncate max-w-16">
+                  {projects.find(p => p.id === currentProjectId)?.short_name ?? ""}
+                </span>
+              )}
+            </Link>
+          )
+        })()}
 
         {/* Rozliczenia */}
         <Link

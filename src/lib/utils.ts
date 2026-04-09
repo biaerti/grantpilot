@@ -79,11 +79,33 @@ export function eventStatusLabel(status: string): string {
   const labels: Record<string, string> = {
     draft: "Szkic",
     planned: "Zaplanowane",
-    accepted: "Zatwierdzone",
+    in_progress: "W realizacji",
     completed: "Zrealizowane",
     settled: "Rozliczone",
   }
   return labels[status] ?? status
+}
+
+/**
+ * Oblicza wyświetlany status zdarzenia na podstawie dat.
+ * Jeśli zdarzenie jest zaplanowane i trwa (dziś >= planned_date i dziś <= planned_end_date lub brak end_date) → in_progress.
+ * Statusy completed/settled/draft nie są nadpisywane.
+ */
+export function computeEventDisplayStatus(
+  status: string,
+  plannedDate: string | null | undefined,
+  plannedEndDate: string | null | undefined,
+): string {
+  if (status !== "planned" && status !== "accepted") return status
+  if (!plannedDate) return status
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const start = new Date(plannedDate)
+  start.setHours(0, 0, 0, 0)
+  const end = plannedEndDate ? new Date(plannedEndDate) : start
+  end.setHours(0, 0, 0, 0)
+  if (today >= start && today <= end) return "in_progress"
+  return status
 }
 
 export function projectStatusLabel(status: string): string {

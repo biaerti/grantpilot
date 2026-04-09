@@ -4,9 +4,8 @@ import { Sidebar } from "@/components/layout/sidebar"
 import { Header } from "@/components/layout/header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { BudgetProgress } from "@/components/budget/budget-progress"
 import { SpendingMobilization } from "@/components/budget/spending-mobilization"
-import { formatCurrency, formatDate, formatDateShort, daysRemaining, getProjectHexColor, eventTypeLabel } from "@/lib/utils"
+import { formatCurrency, formatDate, formatDateShort, daysRemaining, getProjectHexColor, eventTypeLabel, percentOf } from "@/lib/utils"
 import { EventStatusBadge } from "@/components/events/event-status-badge"
 import Link from "next/link"
 import {
@@ -173,6 +172,11 @@ export default async function DashboardPage() {
                   const spent = projectExpenses[project.id] ?? 0
                   const days = daysRemaining(project.end_date)
                   const color = getProjectHexColor(idx)
+                  const startMs = new Date(project.start_date).getTime()
+                  const endMs = new Date(project.end_date).getTime()
+                  const nowMs = Date.now()
+                  const timeElapsedPct = Math.min(100, Math.max(0, Math.round(((nowMs - startMs) / (endMs - startMs)) * 100)))
+                  const budgetPct = percentOf(spent, project.total_budget ?? 0)
 
                   return (
                     <Link key={project.id} href={`/projects/${project.id}`}>
@@ -199,11 +203,33 @@ export default async function DashboardPage() {
                             </div>
                           </div>
 
-                          <BudgetProgress
-                            planned={project.total_budget ?? 0}
-                            spent={spent}
-                            compact
-                          />
+                          {/* Dual progress: time elapsed vs budget spent */}
+                          <div className="space-y-1.5">
+                            <div className="flex justify-between text-xs text-slate-500 mb-0.5">
+                              <span>Czas</span>
+                              <span>{timeElapsedPct}%</span>
+                            </div>
+                            <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all ${timeElapsedPct >= 90 ? "bg-red-500" : timeElapsedPct >= 70 ? "bg-amber-500" : "bg-slate-400"}`}
+                                style={{ width: `${timeElapsedPct}%` }}
+                              />
+                            </div>
+                            <div className="flex justify-between text-xs text-slate-500 mt-1 mb-0.5">
+                              <span>Budżet</span>
+                              <span>{budgetPct}%</span>
+                            </div>
+                            <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all ${budgetPct >= 100 ? "bg-red-500" : budgetPct >= 80 ? "bg-amber-500" : "bg-blue-500"}`}
+                                style={{ width: `${budgetPct}%` }}
+                              />
+                            </div>
+                            <div className="flex justify-between text-xs text-slate-400 mt-0.5">
+                              <span>Wydano: {formatCurrency(spent)}</span>
+                              <span>Pozostało: {formatCurrency((project.total_budget ?? 0) - spent)}</span>
+                            </div>
+                          </div>
 
                           <div className="flex items-center gap-4 mt-3 text-sm text-slate-500">
                             <span className="flex items-center gap-1">

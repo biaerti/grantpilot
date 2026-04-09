@@ -29,11 +29,11 @@ import {
   CheckCircle,
   Clock,
   Building2,
-  FileText,
   Receipt,
   UserCheck,
   ListTodo,
   FolderOpen,
+  ScrollText,
 } from "lucide-react"
 
 interface PageProps {
@@ -239,10 +239,11 @@ export default async function ProjectDetailPage({ params }: PageProps) {
               { label: "Zadania", href: `/projects/${id}/tasks`, icon: ListTodo, desc: "Budżet i podzadania" },
               { label: "Zdarzenia", href: `/projects/${id}/events`, icon: Calendar, desc: "Lista zdarzeń" },
               { label: "Uczestnicy", href: `/projects/${id}/participants`, icon: UserCheck, desc: "Lista i wsparcie" },
-              { label: "Wykonawcy", href: `/projects/${id}/contractors`, icon: Building2, desc: "Firma i kontakty" },
-              { label: "Umowy", href: `/projects/${id}/contracts`, icon: FileText, desc: "Umowy z wykonawcami" },
+              { label: "Wskaźniki", href: `/projects/${id}/indicators`, icon: TrendingUp, desc: "Monitorowanie celów" },
+              { label: "Umowy", href: `/projects/${id}/contracts`, icon: Building2, desc: "Wykonawcy i umowy" },
+              { label: "Protokoły", href: `/projects/${id}/protocols`, icon: ScrollText, desc: "Protokoły odbioru" },
               { label: "Rozliczenie", href: `/projects/${id}/settlement`, icon: Receipt, desc: "Protokoły miesięczne" },
-              { label: "Dokumenty", href: `/projects/${id}/documents`, icon: FolderOpen, desc: "Dokumenty uczestników" },
+              { label: "Szablony", href: `/projects/${id}/templates`, icon: FolderOpen, desc: "Szablony dokumentów i umów" },
             ].map(({ label, href, icon: Icon, desc }) => (
               <Link key={label} href={href}>
                 <Card className="hover:border-blue-300 hover:bg-blue-50 transition-colors cursor-pointer h-full">
@@ -349,8 +350,11 @@ export default async function ProjectDetailPage({ params }: PageProps) {
                         </>
                       )
                     })()}
-                    <div className="mt-4 text-right">
-                      <Link href={`/projects/${id}/participants`} className="text-sm text-blue-600 hover:text-blue-700 flex items-center gap-1 justify-end">
+                    <div className="mt-4 flex items-center justify-between">
+                      <Link href={`/projects/${id}/indicators`} className="text-sm text-slate-500 hover:text-blue-600 flex items-center gap-1">
+                        <TrendingUp className="w-3.5 h-3.5" /> Wszystkie wskaźniki
+                      </Link>
+                      <Link href={`/projects/${id}/participants`} className="text-sm text-blue-600 hover:text-blue-700 flex items-center gap-1">
                         Wszyscy uczestnicy <ArrowRight className="w-3.5 h-3.5" />
                       </Link>
                     </div>

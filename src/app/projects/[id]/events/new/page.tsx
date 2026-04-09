@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
-import { ArrowLeft, Loader2, X, RefreshCw } from "lucide-react"
+import { ArrowLeft, Loader2, X, RefreshCw, Plus, Trash2 } from "lucide-react"
 import Link from "next/link"
 import type { Task } from "@/lib/types"
 
@@ -74,16 +74,21 @@ export default function NewEventPage() {
   const [supportFormsForTask, setSupportFormsForTask] = useState<SupportForm[]>([])
   const [sfLinkedIds, setSfLinkedIds] = useState<string[] | null>(null) // null = no filter
 
+  interface DateRange {
+    date_from: string
+    date_to: string
+    start_time: string
+    end_time: string
+    location: string
+  }
+
+  const emptyRange = (): DateRange => ({ date_from: "", date_to: "", start_time: "", end_time: "", location: "" })
+
   const [form, setForm] = useState({
     name: "",
     task_id: "",
     budget_line_id: "",
     support_form_id: "",
-    planned_date: "",
-    planned_end_date: "",
-    start_time: "",
-    end_time: "",
-    location: "",
     planned_participants_count: "1",
     planned_hours: "",
     planned_cost: "0",
@@ -93,6 +98,8 @@ export default function NewEventPage() {
     notes: "",
     status: "planned",
   })
+
+  const [dateRanges, setDateRanges] = useState<DateRange[]>([emptyRange()])
 
   const [selectedParticipants, setSelectedParticipants] = useState<string[]>([])
   const [participantSearch, setParticipantSearch] = useState("")
@@ -202,15 +209,9 @@ export default function NewEventPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    const autoName = form.name ||
-      (selectedSF && selectedTask
-        ? `${selectedSF.support_type ?? selectedSF.name} – Zad.${selectedTask.number}`
-        : selectedTask
-        ? `Zdarzenie – Zad.${selectedTask.number}`
-        : "Nowe zdarzenie")
     setSaving(true)
 
-    // Determine event type from support form or line_type
+    // Determine event type from support form
     const eventType = selectedSF?.meeting_type?.toLowerCase().includes("grupow") ? "training"
       : selectedSF?.support_type?.toLowerCase().includes("warsztat") ? "workshop"
       : selectedSF?.support_type?.toLowerCase().includes("konsultacja") ? "consulting"
@@ -218,29 +219,81 @@ export default function NewEventPage() {
       : selectedSF?.support_type?.toLowerCase().includes("mentoring") ? "consulting"
       : "other"
 
+    const firstRange = dateRanges[0]
+    const extraRangesNote = dateRanges.slice(1)
+      .filter(r => r.date_from)
+      .map(r => `${r.date_from}${r.date_to ? "–" + r.date_to : ""}${r.start_time ? " " + r.start_time : ""}${r.end_time ? "–" + r.end_time : ""}${r.location ? " | " + r.location : ""}`)
+      .join("; ")
+    const finalNotes = [form.notes, extraRangesNote ? "Dodatkowe terminy: " + extraRangesNote : ""].filter(Boolean).join("\n")
+
+    const isIndividual = selectedSF
+      ? !selectedSF.meeting_type?.toLowerCase().includes("grupow")
+      : false
+
+    // Wspólne pola zdarzenia
+    const baseEvent = {
+      project_id: projectId,
+      task_id: form.task_id || null,
+      budget_line_id: form.budget_line_id || null,
+      support_form_id: form.support_form_id || null,
+      type: eventType,
+      status: form.status,
+      planned_date: firstRange.date_from || null,
+      planned_end_date: firstRange.date_to || null,
+      start_time: firstRange.start_time || null,
+      end_time: firstRange.end_time || null,
+      location: firstRange.location || null,
+      planned_participants_count: parseInt(form.planned_participants_count) || 1,
+      planned_hours: parseFloat(form.planned_hours) || null,
+      planned_cost: parseFloat(form.planned_cost) || 0,
+      executor_name: form.executor_name || null,
+      contract_id: form.contract_id || null,
+      harmonogram_do_urzedu: form.harmonogram_do_urzedu,
+      notes: finalNotes || null,
+    }
+
+    // Indywidualne + więcej niż 1 uczestnik → osobne zdarzenie per uczestnik
+    if (isIndividual && selectedParticipants.length > 1) {
+      const baseName = form.name ||
+        (selectedSF && selectedTask
+          ? `${selectedSF.support_type ?? selectedSF.name} – Zad.${selectedTask.number}`
+          : selectedTask ? `Zdarzenie – Zad.${selectedTask.number}` : "Nowe zdarzenie")
+
+      let createdCount = 0
+      for (const pid of selectedParticipants) {
+        const participant = allParticipants.find(p => p.id === pid)
+        const participantLabel = participant
+          ? ` (${participant.last_name} ${participant.first_name})`
+          : ""
+        const { data: ev, error } = await supabase
+          .from("events")
+          .insert({ ...baseEvent, name: baseName + participantLabel, planned_participants_count: 1 })
+          .select()
+          .single()
+        if (error) { setSaving(false); toast.error("Błąd: " + error.message); return }
+        await supabase.from("event_participants").insert({
+          event_id: ev.id,
+          participant_id: pid,
+          status: "planned",
+          send_invitation: false,
+        })
+        createdCount++
+      }
+      setSaving(false)
+      toast.success(`Utworzono ${createdCount} zdarzenia indywidualne!`)
+      router.push(`/projects/${projectId}/events`)
+      return
+    }
+
+    // Grupowe lub 1 uczestnik → 1 zdarzenie
+    const autoName = form.name ||
+      (selectedSF && selectedTask
+        ? `${selectedSF.support_type ?? selectedSF.name} – Zad.${selectedTask.number}`
+        : selectedTask ? `Zdarzenie – Zad.${selectedTask.number}` : "Nowe zdarzenie")
+
     const { data: event, error } = await supabase
       .from("events")
-      .insert({
-        project_id: projectId,
-        task_id: form.task_id || null,
-        budget_line_id: form.budget_line_id || null,
-        support_form_id: form.support_form_id || null,
-        name: autoName,
-        type: eventType,
-        status: form.status,
-        planned_date: form.planned_date || null,
-        planned_end_date: form.planned_end_date || null,
-        start_time: form.start_time || null,
-        end_time: form.end_time || null,
-        location: form.location || null,
-        planned_participants_count: parseInt(form.planned_participants_count) || 0,
-        planned_hours: parseFloat(form.planned_hours) || null,
-        planned_cost: parseFloat(form.planned_cost) || 0,
-        executor_name: form.executor_name || null,
-        contract_id: form.contract_id || null,
-        harmonogram_do_urzedu: form.harmonogram_do_urzedu,
-        notes: form.notes || null,
-      })
+      .insert({ ...baseEvent, name: autoName })
       .select()
       .single()
 
@@ -487,7 +540,8 @@ export default function NewEventPage() {
                         <SelectContent>
                           <SelectItem value="draft">Szkic</SelectItem>
                           <SelectItem value="planned">Zaplanowane</SelectItem>
-                          <SelectItem value="accepted">Zatwierdzone</SelectItem>
+                          <SelectItem value="completed">Zrealizowane</SelectItem>
+                          <SelectItem value="settled">Rozliczone</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -529,49 +583,79 @@ export default function NewEventPage() {
               {/* Data i miejsce */}
               <Card>
                 <CardHeader>
-                  <CardTitle>Data i miejsce</CardTitle>
+                  <div className="flex items-center justify-between">
+                    <CardTitle>Data i miejsce</CardTitle>
+                    <button
+                      type="button"
+                      onClick={() => setDateRanges(prev => [...prev, emptyRange()])}
+                      className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Dodaj termin
+                    </button>
+                  </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="space-y-1">
-                    <Label className="text-xs text-slate-500 uppercase tracking-wide">Zakres dat</Label>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1">
-                        <Label className="text-xs">Data rozpoczęcia</Label>
-                        <Input type="date" value={form.planned_date} onChange={e => handleChange("planned_date", e.target.value)} />
+                  {dateRanges.map((range, idx) => (
+                    <div key={idx} className={`space-y-3 ${idx > 0 ? "border-t pt-4" : ""}`}>
+                      {idx > 0 && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Termin {idx + 1}</span>
+                          <button
+                            type="button"
+                            onClick={() => setDateRanges(prev => prev.filter((_, i) => i !== idx))}
+                            className="text-red-400 hover:text-red-600"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+                      {idx === 0 && dateRanges.length > 1 && (
+                        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Termin 1</span>
+                      )}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Data od</Label>
+                          <Input type="date" value={range.date_from}
+                            onChange={e => setDateRanges(prev => prev.map((r, i) => i === idx ? { ...r, date_from: e.target.value } : r))} />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Data do <span className="text-slate-400">(opcjonalna)</span></Label>
+                          <Input type="date" value={range.date_to}
+                            onChange={e => setDateRanges(prev => prev.map((r, i) => i === idx ? { ...r, date_to: e.target.value } : r))} />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Godzina od</Label>
+                          <Input type="time" value={range.start_time}
+                            onChange={e => setDateRanges(prev => prev.map((r, i) => i === idx ? { ...r, start_time: e.target.value } : r))} />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Godzina do</Label>
+                          <Input type="time" value={range.end_time}
+                            onChange={e => setDateRanges(prev => prev.map((r, i) => i === idx ? { ...r, end_time: e.target.value } : r))} />
+                        </div>
                       </div>
                       <div className="space-y-1">
-                        <Label className="text-xs">Data zakończenia <span className="text-slate-400">(jeśli więcej niż 1 dzień)</span></Label>
-                        <Input type="date" value={form.planned_end_date} onChange={e => handleChange("planned_end_date", e.target.value)} />
+                        <Label className="text-xs">Miejsce / sala</Label>
+                        <Select value={range.location} onValueChange={v => setDateRanges(prev => prev.map((r, i) => i === idx ? { ...r, location: v ?? "" } : r))}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Wybierz salę...">
+                              {range.location || "Wybierz salę..."}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Wrocław | Bierutowska 57-59">Wrocław | Bierutowska 57-59 (40 zł/h)</SelectItem>
+                            <SelectItem value="Wrocław | Kwidzyńska 4">Wrocław | Kwidzyńska 4 (75 zł/h)</SelectItem>
+                            <SelectItem value="Kondratowice | Długa 23">Kondratowice | Długa 23 (40 zł/h)</SelectItem>
+                            <SelectItem value="Wałbrzych | Wyzwolenia 24">Wałbrzych | Wyzwolenia 24 (40 zł/h)</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
                     </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <Label className="text-xs">Godzina od</Label>
-                      <Input type="time" value={form.start_time} onChange={e => handleChange("start_time", e.target.value)} />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Godzina do</Label>
-                      <Input type="time" value={form.end_time} onChange={e => handleChange("end_time", e.target.value)} />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Miejsce</Label>
-                    <Select value={form.location} onValueChange={v => handleChange("location", v)}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Wybierz salę...">
-                          {form.location || "Wybierz salę..."}
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Wrocław | Bierutowska 57-59">Wrocław | Bierutowska 57-59 (40 zł/h)</SelectItem>
-                        <SelectItem value="Wrocław | Kwidzyńska 4">Wrocław | Kwidzyńska 4 (75 zł/h)</SelectItem>
-                        <SelectItem value="Kondratowice | Długa 23">Kondratowice | Długa 23 (40 zł/h)</SelectItem>
-                        <SelectItem value="Wałbrzych | Wyzwolenia 24">Wałbrzych | Wyzwolenia 24 (40 zł/h)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="flex items-center gap-2">
+                  ))}
+                  <div className="flex items-center gap-2 pt-1">
                     <input
                       type="checkbox"
                       id="harmonogram"

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useSearchParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { Sidebar } from "@/components/layout/sidebar"
 import { Header } from "@/components/layout/header"
@@ -38,17 +39,28 @@ interface EventWithProject extends Event {
 
 export default function CalendarPage() {
   const supabase = createClient()
+  const searchParams = useSearchParams()
 
   const [currentDate, setCurrentDate] = useState(new Date())
   const [events, setEvents] = useState<EventWithProject[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [selectedEvent, setSelectedEvent] = useState<EventWithProject | null>(null)
   const [loading, setLoading] = useState(true)
+  // Init hiddenProjects: hide all except the one from URL (if provided)
   const [hiddenProjects, setHiddenProjects] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     fetchData()
   }, [])
+
+  // When projects load, if ?project_id= is set, hide all others
+  useEffect(() => {
+    const pid = searchParams?.get("project_id")
+    if (pid && projects.length > 0) {
+      const toHide = new Set(projects.map(p => p.id).filter(id => id !== pid))
+      setHiddenProjects(toHide)
+    }
+  }, [projects, searchParams])
 
   async function fetchData() {
     const [eventsRes, projectsRes] = await Promise.all([

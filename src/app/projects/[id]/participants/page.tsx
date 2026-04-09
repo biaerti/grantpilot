@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/dialog"
 import { degurbaLabel, formatDateShort, genderLabel } from "@/lib/utils"
 import { toast } from "sonner"
-import { Plus, Upload, Search, Users, Loader2, UserCircle, X, FileText, Trash2, Download, FolderOpen } from "lucide-react"
+import { Plus, Upload, Search, Users, Loader2, UserCircle, X, FileText, Trash2, Download, FolderOpen, Sparkles } from "lucide-react"
 import Link from "next/link"
 import type { Participant, Project, ParticipantDocument, DocumentType } from "@/lib/types"
 
@@ -61,6 +61,8 @@ export default function ParticipantsPage() {
   const [search, setSearch] = useState("")
   const [filterGender, setFilterGender] = useState("all")
 
+  const [filterStatus, setFilterStatus] = useState("all")
+
   const [addDialog, setAddDialog] = useState(false)
   const [importDialog, setImportDialog] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -68,6 +70,24 @@ export default function ParticipantsPage() {
   const [events, setEvents] = useState<{ id: string; name: string; planned_date?: string | null; task?: { number: number } | null }[]>([])
   const [selectedEventId, setSelectedEventId] = useState("")
   const [addingSupport, setAddingSupport] = useState(false)
+  const [showExtraCols, setShowExtraCols] = useState(false)
+
+  // Support history dialog
+  const [supportsDialog, setSupportsDialog] = useState<Participant | null>(null)
+  const [participantSupports, setParticipantSupports] = useState<{
+    id: string; name: string; planned_date?: string | null; status: string;
+    location?: string | null; planned_cost?: number | null;
+    task?: { number: number; name: string } | null
+    budget_line?: { name: string } | null
+  }[]>([])
+  const [loadingSupports, setLoadingSupports] = useState(false)
+  const [supportCounts, setSupportCounts] = useState<Record<string, number>>({})
+
+  // Indicators dialog
+  const [indicatorsDialog, setIndicatorsDialog] = useState<{ open: boolean; participant: Participant | null }>({ open: false, participant: null })
+  const [projectIndicators, setProjectIndicators] = useState<{ id: string; code: string; name: string; type: string }[]>([])
+  const [participantIndicators, setParticipantIndicators] = useState<Record<string, { achieved: boolean; noted: boolean }>>({})
+  const [savingIndicator, setSavingIndicator] = useState(false)
 
   // Documents
   const [docsDialog, setDocsDialog] = useState<Participant | null>(null)
@@ -76,7 +96,9 @@ export default function ParticipantsPage() {
   const [docCounts, setDocCounts] = useState<Record<string, number>>({})
   const [loadingDocs, setLoadingDocs] = useState(false)
   const [uploadingDoc, setUploadingDoc] = useState(false)
+  const [generating, setGenerating] = useState<string | null>(null) // template id being generated
   const [newDoc, setNewDoc] = useState({ name: "", document_type_id: "", notes: "" })
+  const [pendingDocFile, setPendingDocFile] = useState<File | null>(null)
   const docFileRef = useRef<HTMLInputElement>(null)
 
   const [csvPreview, setCsvPreview] = useState<string[][]>([])
@@ -96,6 +118,8 @@ export default function ParticipantsPage() {
     fetchEvents()
     fetchDocTypes()
     fetchDocCounts()
+    fetchSupportCounts()
+    fetchProjectIndicators()
   }, [projectId])
 
   async function fetchData() {
@@ -140,13 +164,90 @@ export default function ParticipantsPage() {
     setDocCounts(counts)
   }
 
+  async function fetchSupportCounts() {
+    const { data } = await supabase
+      .from("event_participants")
+      .select("participant_id, event:events!inner(project_id)")
+      .eq("event.project_id", projectId)
+    if (!data) return
+    const counts: Record<string, number> = {}
+    for (const row of data) {
+      counts[row.participant_id] = (counts[row.participant_id] ?? 0) + 1
+    }
+    setSupportCounts(counts)
+  }
+
+  async function fetchProjectIndicators() {
+    const { data } = await supabase
+      .from("project_indicators")
+      .select("id, code, name, type")
+      .eq("project_id", projectId)
+      .eq("type", "result")
+      .order("sort_order")
+    setProjectIndicators(data ?? [])
+  }
+
+  async function openIndicatorsDialog(p: Participant) {
+    setIndicatorsDialog({ open: true, participant: p })
+    const { data } = await supabase
+      .from("participant_indicators")
+      .select("indicator_id, achieved, noted")
+      .eq("participant_id", p.id)
+    const map: Record<string, { achieved: boolean; noted: boolean }> = {}
+    for (const row of data ?? []) {
+      map[row.indicator_id] = { achieved: row.achieved, noted: row.noted }
+    }
+    setParticipantIndicators(map)
+  }
+
+  async function toggleIndicator(indicatorId: string, field: "achieved" | "noted") {
+    if (!indicatorsDialog.participant) return
+    const participantId = indicatorsDialog.participant.id
+    const current = participantIndicators[indicatorId] ?? { achieved: false, noted: false }
+    const newVal = !current[field]
+    setSavingIndicator(true)
+    // upsert
+    const { error } = await supabase.from("participant_indicators").upsert({
+      participant_id: participantId,
+      indicator_id: indicatorId,
+      [field]: newVal,
+      [`${field}_at`]: newVal ? new Date().toISOString() : null,
+    }, { onConflict: "participant_id,indicator_id" })
+    if (error) { toast.error("Błąd: " + error.message); setSavingIndicator(false); return }
+    setParticipantIndicators(prev => ({
+      ...prev,
+      [indicatorId]: { ...current, [field]: newVal },
+    }))
+    setSavingIndicator(false)
+  }
+
+  async function handleStatusChange(participantId: string, status: string) {
+    const { error } = await supabase.from("participants").update({ participation_status: status }).eq("id", participantId)
+    if (error) { toast.error("Błąd: " + error.message); return }
+    setParticipants(prev => prev.map(p => p.id === participantId ? { ...p, participation_status: status as Participant["participation_status"] } : p))
+  }
+
+  async function openSupports(p: Participant) {
+    setSupportsDialog(p)
+    setLoadingSupports(true)
+    const { data } = await supabase
+      .from("event_participants")
+      .select("event:events!inner(id, name, planned_date, status, location, planned_cost, task:tasks(number, name), budget_line:budget_lines(name))")
+      .eq("participant_id", p.id)
+      .order("event(planned_date)", { ascending: false })
+    setParticipantSupports(
+      (data ?? []).map((row: { event: unknown }) => row.event as typeof participantSupports[0])
+    )
+    setLoadingSupports(false)
+  }
+
   async function openDocs(p: Participant) {
     setDocsDialog(p)
     setLoadingDocs(true)
     setNewDoc({ name: "", document_type_id: "", notes: "" })
     const { data } = await supabase
       .from("participant_documents")
-      .select("*, document_type:document_types(id,name)")
+      .select("*, document_type:document_types!document_type_id(id,name)")
       .eq("participant_id", p.id)
       .order("uploaded_at", { ascending: false })
     setDocs((data ?? []) as unknown as ParticipantDocument[])
@@ -157,7 +258,6 @@ export default function ParticipantsPage() {
     if (!docsDialog) return
     setUploadingDoc(true)
     try {
-      // Upload do Supabase Storage
       const ext = file.name.split(".").pop()
       const storagePath = `${projectId}/${docsDialog.id}/${Date.now()}_${file.name}`
       const { error: upErr } = await supabase.storage
@@ -182,17 +282,46 @@ export default function ParticipantsPage() {
           file_size: file.size,
           mime_type: file.type || `application/${ext}`,
           notes: newDoc.notes || null,
+          generated: false,
         })
-        .select("*, document_type:document_types(id,name)")
+        .select("*, document_type:document_types!document_type_id(id,name)")
         .single()
 
       if (insErr) { toast.error("Błąd zapisu: " + insErr.message); setUploadingDoc(false); return }
       setDocs(prev => [inserted as unknown as ParticipantDocument, ...prev])
       setDocCounts(prev => ({ ...prev, [docsDialog.id]: (prev[docsDialog.id] ?? 0) + 1 }))
       setNewDoc({ name: "", document_type_id: "", notes: "" })
+      setPendingDocFile(null)
       toast.success("Dokument dodany!")
     } finally {
       setUploadingDoc(false)
+    }
+  }
+
+  async function handleGenerate(template: DocumentType) {
+    if (!docsDialog) return
+    setGenerating(template.id)
+    try {
+      const res = await fetch("/api/generate-document", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          document_type_id: template.id,
+          participant_id: docsDialog.id,
+          project_id: projectId,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        console.error("[generate]", json)
+        toast.error((json.error ?? res.statusText), { duration: 8000 })
+        return
+      }
+      setDocs(prev => [json.document as ParticipantDocument, ...prev])
+      setDocCounts(prev => ({ ...prev, [docsDialog.id]: (prev[docsDialog.id] ?? 0) + 1 }))
+      toast.success(`Wygenerowano dokument dla ${docsDialog.first_name} ${docsDialog.last_name}!`)
+    } finally {
+      setGenerating(null)
     }
   }
 
@@ -233,7 +362,8 @@ export default function ParticipantsPage() {
       p.pesel?.includes(search) ||
       p.city?.toLowerCase().includes(search.toLowerCase())
     const matchesGender = filterGender === "all" || p.gender === filterGender
-    return matchesSearch && matchesGender
+    const matchesStatus = filterStatus === "all" || (p.participation_status ?? "active") === filterStatus
+    return matchesSearch && matchesGender && matchesStatus
   })
 
   const stats = {
@@ -438,6 +568,17 @@ export default function ParticipantsPage() {
                   <SelectItem value="M">Mężczyźni (M)</SelectItem>
                 </SelectContent>
               </Select>
+              <Select value={filterStatus} onValueChange={(v) => setFilterStatus(v ?? "all")}>
+                <SelectTrigger className="w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Wszystkie statusy</SelectItem>
+                  <SelectItem value="lead">Lead</SelectItem>
+                  <SelectItem value="active">W projekcie</SelectItem>
+                  <SelectItem value="completed">Zakończony</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={() => setImportDialog(true)}>
@@ -460,13 +601,35 @@ export default function ParticipantsPage() {
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Imię i nazwisko</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Płeć</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Wiek</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Powiat</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Miejscowość</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Obszar</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Email</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Telefon</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Status zawod.</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Wsparcie od</th>
+                    {showExtraCols && <>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Gmina</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Powiat</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Wykształcenie</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Niepełnospr.</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Bezdomny</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Mniejszość</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Obce pochodenie</th>
+                    </>}
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Status</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Źródło</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Wsparcia</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Wskaźniki</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Dokumenty</th>
-                    <th className="px-4 py-3"></th>
+                    <th className="px-2 py-3">
+                      <button
+                        onClick={() => setShowExtraCols(v => !v)}
+                        className="text-xs text-slate-400 hover:text-blue-600 whitespace-nowrap"
+                        title={showExtraCols ? "Ukryj dodatkowe kolumny" : "Pokaż więcej kolumn"}
+                      >
+                        {showExtraCols ? "« mniej" : "więcej »"}
+                      </button>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -509,7 +672,7 @@ export default function ParticipantsPage() {
                             </span>
                           ) : "—"}
                         </td>
-                        <td className="px-4 py-3 text-slate-600">{p.county ?? "—"}</td>
+                        <td className="px-4 py-3 text-slate-600 text-xs">{p.city ?? "—"}</td>
                         <td className="px-4 py-3">
                           <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
                             p.degurba === 3 ? "bg-green-100 text-green-700" :
@@ -519,12 +682,65 @@ export default function ParticipantsPage() {
                             {degurbaLabel(p.degurba)}
                           </span>
                         </td>
+                        <td className="px-4 py-3 text-slate-600 text-xs">{p.email ?? "—"}</td>
+                        <td className="px-4 py-3 text-slate-600 text-xs">{p.phone ?? "—"}</td>
                         <td className="px-4 py-3 text-slate-600 text-xs">{p.employment_status ?? "—"}</td>
                         <td className="px-4 py-3 text-slate-600 text-xs">{formatDateShort(p.support_start_date)}</td>
+                        {showExtraCols && <>
+                          <td className="px-4 py-3 text-slate-600 text-xs">{p.commune ?? "—"}</td>
+                          <td className="px-4 py-3 text-slate-600 text-xs">{p.county ?? "—"}</td>
+                          <td className="px-4 py-3 text-slate-600 text-xs max-w-28 truncate" title={p.education_level ?? ""}>{p.education_level ?? "—"}</td>
+                          <td className="px-4 py-3 text-center text-xs">{p.disability ? <span className="text-amber-600 font-medium">Tak</span> : <span className="text-slate-300">Nie</span>}</td>
+                          <td className="px-4 py-3 text-center text-xs">{p.homeless ? <span className="text-amber-600 font-medium">Tak</span> : <span className="text-slate-300">Nie</span>}</td>
+                          <td className="px-4 py-3 text-center text-xs">{p.minority ? <span className="text-amber-600 font-medium">Tak</span> : <span className="text-slate-300">Nie</span>}</td>
+                          <td className="px-4 py-3 text-center text-xs">{p.foreign_origin ? <span className="text-amber-600 font-medium">Tak</span> : <span className="text-slate-300">Nie</span>}</td>
+                        </>}
+                        {/* Status uczestnictwa */}
+                        <td className="px-4 py-3">
+                          <Select
+                            value={p.participation_status ?? "active"}
+                            onValueChange={v => v && handleStatusChange(p.id, v)}
+                          >
+                            <SelectTrigger className="h-7 w-28 text-xs border-0 shadow-none px-2 focus:ring-0">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="lead">Lead</SelectItem>
+                              <SelectItem value="active">W projekcie</SelectItem>
+                              <SelectItem value="completed">Zakończony</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </td>
                         <td className="px-4 py-3">
                           <Badge variant="outline" className="text-xs">
                             {p.source === "import" ? "SL" : "Ręcznie"}
                           </Badge>
+                        </td>
+                        {/* Wsparcia - zdarzenia uczestnika */}
+                        <td className="px-4 py-3">
+                          <button
+                            onClick={() => openSupports(p)}
+                            className="flex items-center gap-1 text-xs hover:text-blue-600 transition-colors"
+                          >
+                            {supportCounts[p.id] ? (
+                              <span className="inline-flex items-center gap-1 bg-blue-100 text-blue-700 font-medium px-2 py-0.5 rounded-full">
+                                <span>⚡</span>{supportCounts[p.id]}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400">—</span>
+                            )}
+                          </button>
+                        </td>
+                        {/* Wskaźniki */}
+                        <td className="px-4 py-3">
+                          <button
+                            onClick={() => openIndicatorsDialog(p)}
+                            className="flex items-center gap-1 text-xs text-slate-600 hover:text-purple-600 transition-colors"
+                            title="Wskaźniki rezultatu"
+                          >
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span className="text-slate-400">edytuj</span>
+                          </button>
                         </td>
                         <td className="px-4 py-3">
                           <button
@@ -539,10 +755,10 @@ export default function ParticipantsPage() {
                             )}
                           </button>
                         </td>
-                        <td className="px-4 py-3">
+                        <td className="px-2 py-3">
                           <Link href={`/projects/${projectId}/events/new?participant_id=${p.id}`}>
-                            <Button size="sm" variant="outline" className="h-7 text-xs">
-                              + Wsparcie
+                            <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-slate-400 hover:text-blue-600" title="Dodaj wsparcie">
+                              <Plus className="w-3.5 h-3.5" />
                             </Button>
                           </Link>
                         </td>
@@ -555,6 +771,89 @@ export default function ParticipantsPage() {
           </Card>
         </main>
       </div>
+
+      {/* Supports history dialog */}
+      <Dialog open={!!supportsDialog} onOpenChange={open => { if (!open) setSupportsDialog(null) }}>
+        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <span>⚡</span>
+              Wsparcia — {supportsDialog?.first_name} {supportsDialog?.last_name}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto py-2 space-y-2">
+            {loadingSupports ? (
+              <div className="flex items-center justify-center py-10">
+                <Loader2 className="w-6 h-6 animate-spin text-slate-300" />
+              </div>
+            ) : participantSupports.length === 0 ? (
+              <div className="text-center py-10 text-slate-400">
+                <p className="text-sm">Brak zdarzeń przypisanych do uczestnika</p>
+                {supportsDialog && (
+                  <Link href={`/projects/${projectId}/events/new?participant_id=${supportsDialog.id}`}>
+                    <Button size="sm" variant="outline" className="mt-3">
+                      <Plus className="w-3.5 h-3.5 mr-1" />Dodaj wsparcie
+                    </Button>
+                  </Link>
+                )}
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between px-1">
+                  <p className="text-xs text-slate-400">{participantSupports.length} wsparć łącznie</p>
+                  {supportsDialog && (
+                    <Link
+                      href={`/projects/${projectId}/events?participant_id=${supportsDialog.id}`}
+                      onClick={() => setSupportsDialog(null)}
+                      className="text-xs text-blue-600 hover:underline flex items-center gap-1"
+                    >
+                      Pokaż w zdarzeniach →
+                    </Link>
+                  )}
+                </div>
+                {participantSupports.map(ev => (
+                  <div key={ev.id} className="flex items-start gap-3 px-3 py-2.5 rounded-lg border bg-white hover:bg-slate-50">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium text-sm text-slate-800">{ev.name}</span>
+                        <span className={`text-xs px-1.5 py-0.5 rounded ${
+                          ev.status === "settled" ? "bg-green-100 text-green-700" :
+                          ev.status === "completed" ? "bg-blue-100 text-blue-700" :
+                          ev.status === "planned" ? "bg-slate-100 text-slate-600" :
+                          "bg-amber-100 text-amber-700"
+                        }`}>
+                          {ev.status === "settled" ? "Rozliczone" : ev.status === "completed" ? "Zakończone" : ev.status === "planned" ? "Zaplanowane" : ev.status}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3 text-xs text-slate-400 mt-0.5 flex-wrap">
+                        {ev.task && <span className="text-slate-600">Zad. {ev.task.number}: {ev.task.name}</span>}
+                        {ev.budget_line && <span>· {ev.budget_line.name}</span>}
+                        {ev.planned_date && <span>· {new Date(ev.planned_date).toLocaleDateString("pl-PL")}</span>}
+                        {ev.location && <span>· 📍 {ev.location}</span>}
+                        {ev.planned_cost && <span>· {ev.planned_cost.toLocaleString("pl-PL")} zł</span>}
+                      </div>
+                    </div>
+                    <Link href={`/projects/${projectId}/events?highlight=${ev.id}`}
+                      className="text-xs text-blue-600 hover:underline flex-shrink-0">
+                      →
+                    </Link>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+          <DialogFooter className="border-t pt-3">
+            {supportsDialog && (
+              <Link href={`/projects/${projectId}/events/new?participant_id=${supportsDialog.id}`}>
+                <Button variant="outline" size="sm">
+                  <Plus className="w-3.5 h-3.5 mr-1" />Dodaj wsparcie
+                </Button>
+              </Link>
+            )}
+            <Button variant="outline" onClick={() => setSupportsDialog(null)}>Zamknij</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Add support dialog */}
       <Dialog open={!!supportDialog} onOpenChange={open => { if (!open) setSupportDialog(null) }}>
@@ -746,8 +1045,8 @@ export default function ParticipantsPage() {
       </Dialog>
 
       {/* Documents dialog */}
-      <Dialog open={!!docsDialog} onOpenChange={open => { if (!open) setDocsDialog(null) }}>
-        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+      <Dialog open={!!docsDialog} onOpenChange={open => { if (!open) { setDocsDialog(null); setPendingDocFile(null); setNewDoc({ name: "", document_type_id: "", notes: "" }) } }}>
+        <DialogContent className="max-w-2xl max-h-[88vh] flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FileText className="w-5 h-5 text-blue-600" />
@@ -755,120 +1054,165 @@ export default function ParticipantsPage() {
             </DialogTitle>
           </DialogHeader>
 
-          <div className="flex-1 overflow-y-auto space-y-4 py-2">
-            {/* Upload nowego dokumentu */}
-            <div className="border rounded-lg p-4 space-y-3 bg-slate-50">
-              <p className="text-sm font-medium text-slate-700">Dodaj dokument</p>
-              <div className="grid grid-cols-2 gap-3">
+          <div className="flex-1 overflow-y-auto space-y-4 py-2 pr-1">
+
+            {/* Sekcja: Szablony do generowania */}
+            {docTypes.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Generuj z szablonu</p>
+                <div className="grid gap-2">
+                  {docTypes.map(dt => {
+                    const alreadyHas = docs.some(d => d.document_type_id === dt.id)
+                    const isGenerating = generating === dt.id
+                    const catLabel = (dt as DocumentType & { category?: string }).category
+                    return (
+                      <div key={dt.id} className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border ${alreadyHas ? "bg-green-50 border-green-200" : "bg-white border-slate-200"}`}>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-slate-800">{dt.name}</span>
+                            {dt.required && !alreadyHas && (
+                              <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">wymagany</span>
+                            )}
+                            {alreadyHas && (
+                              <span className="text-xs text-green-700 font-medium">✓ gotowy</span>
+                            )}
+                          </div>
+                          {catLabel && (
+                            <p className="text-xs text-slate-400 mt-0.5">{catLabel.replace(/_/g, " ")}</p>
+                          )}
+                        </div>
+                        <Button
+                          size="sm"
+                          variant={alreadyHas ? "outline" : "default"}
+                          className="h-7 text-xs flex-shrink-0"
+                          disabled={isGenerating}
+                          onClick={() => handleGenerate(dt)}
+                        >
+                          {isGenerating
+                            ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Generowanie...</>
+                            : alreadyHas
+                              ? <><Sparkles className="w-3 h-3 mr-1" />Generuj ponownie</>
+                              : <><Sparkles className="w-3 h-3 mr-1" />Generuj</>
+                          }
+                        </Button>
+                      </div>
+                    )
+                  })}
+                </div>
+                {docTypes.length === 0 && (
+                  <p className="text-xs text-slate-400 italic">
+                    Brak szablonów.{" "}
+                    <a href={`/projects/${projectId}/templates`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                      Dodaj szablony →
+                    </a>
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Separator */}
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-200" /></div>
+              <div className="relative flex justify-center"><span className="bg-white px-3 text-xs text-slate-400">lub wgraj skan ręcznie</span></div>
+            </div>
+
+            {/* Upload ręczny */}
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <Label className="text-xs">Typ dokumentu</Label>
                   <Select value={newDoc.document_type_id} onValueChange={v => setNewDoc(d => ({ ...d, document_type_id: v ?? "" }))}>
-                    <SelectTrigger className="h-9 text-sm">
-                      <SelectValue placeholder="— wybierz —" />
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue placeholder="— bez kategorii —" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="">Bez kategorii</SelectItem>
                       {docTypes.map(dt => (
-                        <SelectItem key={dt.id} value={dt.id}>
-                          {dt.required ? "* " : ""}{dt.name}
-                        </SelectItem>
+                        <SelectItem key={dt.id} value={dt.id}>{dt.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Nazwa (opcjonalna)</Label>
-                  <Input
-                    placeholder="Domyślnie: nazwa pliku"
-                    value={newDoc.name}
-                    onChange={e => setNewDoc(d => ({ ...d, name: e.target.value }))}
-                    className="h-9 text-sm"
-                  />
-                </div>
-                <div className="col-span-2 space-y-1">
                   <Label className="text-xs">Uwagi</Label>
                   <Input
-                    placeholder="np. dostarczone 15.01.2026"
+                    placeholder="np. scan oryginału"
                     value={newDoc.notes}
                     onChange={e => setNewDoc(d => ({ ...d, notes: e.target.value }))}
-                    className="h-9 text-sm"
+                    className="h-8 text-xs"
                   />
                 </div>
               </div>
               <div
-                className="border-2 border-dashed border-slate-300 rounded-lg p-4 text-center cursor-pointer hover:border-blue-400 transition-colors"
+                className={`border-2 border-dashed rounded-lg p-3 text-center cursor-pointer transition-colors ${pendingDocFile ? "border-green-400 bg-green-50" : "border-slate-200 hover:border-blue-400"}`}
                 onClick={() => docFileRef.current?.click()}
               >
                 {uploadingDoc ? (
-                  <div className="flex items-center justify-center gap-2 text-blue-600">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span className="text-sm">Przesyłanie...</span>
+                  <div className="flex items-center justify-center gap-2 text-blue-600 text-sm">
+                    <Loader2 className="w-4 h-4 animate-spin" />Przesyłanie...
+                  </div>
+                ) : pendingDocFile ? (
+                  <div className="flex items-center justify-between px-2">
+                    <span className="text-sm text-green-700 font-medium truncate">{pendingDocFile.name}</span>
+                    <Button size="sm" variant="default" className="h-7 text-xs ml-2 flex-shrink-0"
+                      onClick={e => { e.stopPropagation(); handleUploadDoc(pendingDocFile) }}>
+                      <Upload className="w-3 h-3 mr-1" />Wyślij
+                    </Button>
                   </div>
                 ) : (
-                  <>
-                    <Upload className="w-6 h-6 mx-auto mb-1 text-slate-400" />
-                    <p className="text-sm text-slate-600">Kliknij i wybierz plik (PDF, DOC, DOCX)</p>
-                  </>
+                  <div className="flex items-center justify-center gap-2 text-slate-400 text-sm py-0.5">
+                    <Upload className="w-4 h-4" />
+                    <span>Kliknij i wybierz plik (PDF, DOCX, JPG)</span>
+                  </div>
                 )}
                 <input
                   ref={docFileRef}
                   type="file"
                   accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
                   className="hidden"
-                  onChange={e => {
-                    const file = e.target.files?.[0]
-                    if (file) handleUploadDoc(file)
-                    e.target.value = ""
-                  }}
+                  onChange={e => { setPendingDocFile(e.target.files?.[0] ?? null); e.target.value = "" }}
                 />
               </div>
             </div>
 
-            {/* Lista dokumentów */}
+            {/* Lista dokumentów uczestnika */}
             {loadingDocs ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+              <div className="flex items-center justify-center py-6">
+                <Loader2 className="w-6 h-6 animate-spin text-slate-300" />
               </div>
-            ) : docs.length === 0 ? (
-              <div className="text-center py-8 text-slate-400">
-                <FileText className="w-10 h-10 mx-auto mb-2 opacity-30" />
-                <p className="text-sm">Brak dokumentów dla tego uczestnika</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">
-                  Wgrane dokumenty ({docs.length})
-                </p>
+            ) : docs.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Dokumenty uczestnika ({docs.length})</p>
                 {docs.map(doc => (
-                  <div key={doc.id} className="flex items-center gap-3 p-3 border rounded-lg bg-white hover:bg-slate-50 group">
-                    <FileText className="w-5 h-5 text-slate-400 flex-shrink-0" />
+                  <div key={doc.id} className="flex items-center gap-3 px-3 py-2 rounded-lg border bg-white hover:bg-slate-50 group">
+                    <span className="text-base flex-shrink-0">
+                      {doc.generated ? "✨" : doc.mime_type?.includes("pdf") ? "📕" : doc.mime_type?.includes("word") ? "📘" : doc.mime_type?.includes("image") ? "🖼️" : "📄"}
+                    </span>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-slate-800 truncate">{doc.name}</p>
-                      <div className="flex items-center gap-2 text-xs text-slate-500">
+                      <div className="flex items-center gap-2 text-xs text-slate-400">
                         {doc.document_type && (
-                          <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-xs">
-                            {doc.document_type.name}
-                          </span>
+                          <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">{doc.document_type.name}</span>
                         )}
-                        {doc.file_name && <span className="truncate">{doc.file_name}</span>}
-                        {doc.file_size && <span>({Math.round(doc.file_size / 1024)} KB)</span>}
+                        {doc.generated && <span className="text-violet-600">wygenerowany</span>}
+                        {doc.uploaded_at && <span>{new Date(doc.uploaded_at).toLocaleDateString("pl")}</span>}
+                        {doc.notes && <span className="italic">{doc.notes}</span>}
                       </div>
-                      {doc.notes && <p className="text-xs text-slate-400 mt-0.5">{doc.notes}</p>}
                     </div>
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {doc.file_url && (
-                        <a href={doc.file_url} target="_blank" rel="noopener noreferrer">
-                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0">
+                    <div className="flex items-center gap-1">
+                      {doc.file_url ? (
+                        <a href={doc.file_url} target="_blank" rel="noopener noreferrer" title="Pobierz dokument">
+                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-blue-500 hover:text-blue-700">
                             <Download className="w-3.5 h-3.5" />
                           </Button>
                         </a>
+                      ) : (
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-slate-300 cursor-not-allowed" title="Brak pliku – dokument wygenerowany bez pliku" disabled>
+                          <Download className="w-3.5 h-3.5" />
+                        </Button>
                       )}
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 w-7 p-0 text-red-400 hover:text-red-600"
-                        onClick={() => handleDeleteDoc(doc)}
-                      >
+                      <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-400 hover:text-red-600"
+                        onClick={() => handleDeleteDoc(doc)}>
                         <Trash2 className="w-3.5 h-3.5" />
                       </Button>
                     </div>
@@ -876,28 +1220,104 @@ export default function ParticipantsPage() {
                 ))}
               </div>
             )}
-
-            {/* Wymagane typy — checklistka */}
-            {docTypes.filter(dt => dt.required).length > 0 && (
-              <div className="border rounded-lg p-3 bg-amber-50 border-amber-200">
-                <p className="text-xs font-medium text-amber-800 mb-2">Wymagane dokumenty</p>
-                <div className="space-y-1">
-                  {docTypes.filter(dt => dt.required).map(dt => {
-                    const has = docs.some(d => d.document_type_id === dt.id)
-                    return (
-                      <div key={dt.id} className={`flex items-center gap-2 text-xs ${has ? "text-green-700" : "text-amber-700"}`}>
-                        <span>{has ? "✓" : "○"}</span>
-                        <span>{dt.name}</span>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
           </div>
 
+          <DialogFooter className="border-t pt-3">
+            <Button variant="outline" onClick={() => { setDocsDialog(null); setPendingDocFile(null) }}>Zamknij</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Indicators dialog */}
+      <Dialog open={indicatorsDialog.open} onOpenChange={open => !open && setIndicatorsDialog({ open: false, participant: null })}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-purple-500" />
+              Wskaźniki rezultatu — {indicatorsDialog.participant?.first_name} {indicatorsDialog.participant?.last_name}
+            </DialogTitle>
+          </DialogHeader>
+          {(() => {
+            const isCompleted = (indicatorsDialog.participant?.participation_status ?? "active") === "completed"
+            return (
+              <>
+                <div className="flex items-center gap-3 -mt-2 mb-1">
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${isCompleted ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>
+                    {isCompleted ? "✓ Uczestnik zakończył projekt" : "Uczestnik aktywny"}
+                  </span>
+                  <span className="text-xs text-slate-400">Wybierz jedno: zanotowany lub osiągnięty</span>
+                </div>
+                {projectIndicators.length === 0 ? (
+                  <p className="text-sm text-slate-400 py-4 text-center">Brak wskaźników rezultatu w tym projekcie.<br/>Dodaj je w zakładce Wskaźniki.</p>
+                ) : (
+                  <div className="space-y-2 py-1">
+                    {projectIndicators.map(ind => {
+                      const pi = participantIndicators[ind.id] ?? { achieved: false, noted: false }
+                      // Stan aktywny: noted XOR achieved (radio)
+                      const active = pi.achieved ? "achieved" : pi.noted ? "noted" : null
+
+                      const handleSelect = (field: "noted" | "achieved") => {
+                        if (active === field) {
+                          // odznacz
+                          toggleIndicator(ind.id, field)
+                        } else {
+                          // odznacz poprzedni jeśli był, zaznacz nowy
+                          if (active && active !== field) toggleIndicator(ind.id, active)
+                          toggleIndicator(ind.id, field)
+                        }
+                      }
+
+                      return (
+                        <div key={ind.id} className={`flex items-center justify-between gap-3 p-3 rounded-lg border transition-colors ${
+                          active === "achieved" ? "bg-green-50 border-green-200" :
+                          active === "noted" ? "bg-amber-50 border-amber-200" : "bg-slate-50"
+                        }`}>
+                          <div className="flex-1 min-w-0">
+                            {ind.code && <span className="text-xs font-mono text-slate-400 mr-1">{ind.code}</span>}
+                            <span className="text-sm text-slate-800">{ind.name}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
+                            {/* Zanotowany (żółty) — zawsze dostępny */}
+                            <button
+                              disabled={savingIndicator || active === "achieved"}
+                              onClick={() => handleSelect("noted")}
+                              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                                active === "noted"
+                                  ? "bg-amber-400 text-white"
+                                  : active === "achieved"
+                                  ? "bg-slate-100 text-slate-300 cursor-not-allowed"
+                                  : "bg-slate-200 text-slate-600 hover:bg-amber-100 hover:text-amber-700"
+                              }`}
+                              title="Zanotowany — uczestnik aktywny, wskaźnik wstępnie spełniony"
+                            >
+                              Zanotowany
+                            </button>
+                            {/* Osiągnięty (zielony) — tylko gdy status = completed */}
+                            <button
+                              disabled={savingIndicator || !isCompleted || active === "noted"}
+                              onClick={() => handleSelect("achieved")}
+                              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                                active === "achieved"
+                                  ? "bg-green-500 text-white"
+                                  : !isCompleted || active === "noted"
+                                  ? "bg-slate-100 text-slate-300 cursor-not-allowed"
+                                  : "bg-slate-200 text-slate-600 hover:bg-green-100 hover:text-green-700"
+                              }`}
+                              title={!isCompleted ? "Dostępne tylko gdy uczestnik ma status Zakończony" : "Osiągnięty — uczestnik zakończył projekt"}
+                            >
+                              Osiągnięty
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </>
+            )
+          })()}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDocsDialog(null)}>Zamknij</Button>
+            <Button variant="outline" onClick={() => setIndicatorsDialog({ open: false, participant: null })}>Zamknij</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

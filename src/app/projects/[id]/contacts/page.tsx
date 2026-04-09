@@ -4,7 +4,7 @@ interface PageProps {
   params: Promise<{ id: string }>
 }
 
-export default async function ContractorsRedirect({ params }: PageProps) {
+export default async function ContactsRedirect({ params }: PageProps) {
   const { id } = await params
-  redirect(`/projects/${id}/contacts`)
+  redirect(`/projects/${id}/contracts`)
 }
