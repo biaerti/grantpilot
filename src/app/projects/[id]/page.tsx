@@ -35,6 +35,8 @@ import {
   FolderOpen,
   ScrollText,
   UserPlus,
+  FileText,
+  CreditCard,
 } from "lucide-react"
 
 interface PageProps {
@@ -235,7 +237,7 @@ export default async function ProjectDetailPage({ params }: PageProps) {
           </div>
 
           {/* Quick navigation */}
-          <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
             {[
               { label: "Leady", href: `/projects/${id}/leads`, icon: UserPlus, desc: "Rekrutacja kandydatów" },
               { label: "Zadania", href: `/projects/${id}/tasks`, icon: ListTodo, desc: "Budżet i podzadania" },
@@ -243,6 +245,8 @@ export default async function ProjectDetailPage({ params }: PageProps) {
               { label: "Uczestnicy", href: `/projects/${id}/participants`, icon: UserCheck, desc: "Lista i wsparcie" },
               { label: "Wskaźniki", href: `/projects/${id}/indicators`, icon: TrendingUp, desc: "Monitorowanie celów" },
               { label: "Umowy", href: `/projects/${id}/contracts`, icon: Building2, desc: "Wykonawcy i umowy" },
+              { label: "Faktury", href: `/projects/${id}/invoices`, icon: CreditCard, desc: "Dokumenty kosztowe" },
+              { label: "WNP", href: `/projects/${id}/wnp`, icon: FileText, desc: "Wnioski o płatność" },
               { label: "Protokoły", href: `/projects/${id}/protocols`, icon: ScrollText, desc: "Protokoły odbioru" },
               { label: "Rozliczenie", href: `/projects/${id}/settlement`, icon: Receipt, desc: "Protokoły miesięczne" },
               { label: "Szablony", href: `/projects/${id}/templates`, icon: FolderOpen, desc: "Szablony dokumentów i umów" },

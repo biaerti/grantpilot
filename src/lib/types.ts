@@ -184,6 +184,8 @@ export interface EventStaff {
   staff?: Staff
 }
 
+export type WnpType = 'zaliczkowy' | 'rozliczeniowy' | 'sprawozdawczy'
+
 export interface SettlementPeriod {
   id: string
   project_id: string
@@ -191,15 +193,21 @@ export interface SettlementPeriod {
   period_start: string
   period_end: string
   status: SettlementPeriodStatus
+  wnp_type?: WnpType
   advance_received: boolean
   advance_amount: number
   total_claimed: number
   total_approved?: number
   submitted_at?: string
   approved_at?: string
+  file_url?: string
+  file_name?: string
+  file_size?: number
   notes?: string
   created_at: string
 }
+
+export type InvoiceDocType = 'faktura' | 'lista_plac' | 'umowa_zlecenie' | 'umowa_o_dzielo' | 'rachunek' | 'inne'
 
 export interface Expense {
   id: string
@@ -209,6 +217,7 @@ export interface Expense {
   event_id?: string
   period_id?: string
   organization_id?: string
+  settlement_period_id?: string
   document_number?: string
   accounting_number?: string
   vendor_name?: string
@@ -217,10 +226,17 @@ export interface Expense {
   payment_date?: string
   amount: number
   description?: string
+  doc_type?: InvoiceDocType
+  file_url?: string
+  file_name?: string
+  file_size?: number
+  contractor_id?: string
   status: ExpenseStatus
   notes?: string
   created_at: string
   organization?: Organization
+  // joined
+  settlement_period?: Pick<SettlementPeriod, 'id' | 'number' | 'period_start' | 'period_end'>
 }
 
 export interface AccountingRequest {
